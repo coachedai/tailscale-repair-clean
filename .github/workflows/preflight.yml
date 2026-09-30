@@ -109,6 +109,7 @@ jobs:
       - name: Test installed service and full scheduled recurrence on an empty runner
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_PREFLIGHT_VALIDATION: ${{ github.run_id }}
         run: |
           $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           & $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\release\test-native-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"

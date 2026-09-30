@@ -190,6 +190,12 @@ class PassiveStartupWiring(unittest.TestCase):
         self.assertIn(r'System32\WindowsPowerShell\v1.0\powershell.exe',commands)
         self.assertIn('test-native-windows.ps1',commands)
         self.assertIn('-NonInteractive',commands)
+        native_step=next(x for x in job['steps'] if 'test-native-windows.ps1' in x.get('run',''))
+        self.assertEqual(native_step['env']['TQR_NATIVE_LAB_RUN'],'${{ github.run_id }}')
+        self.assertEqual(native_step['env']['TQR_PREFLIGHT_VALIDATION'],'${{ github.run_id }}')
+        native_guard=text('release/test-native-windows.ps1')
+        self.assertIn('TQR_PREFLIGHT_VALIDATION',native_guard)
+        self.assertIn('$preflightValidation',native_guard)
         self.assertNotIn('git push',commands)
         self.assertEqual(workflow['permissions'],{'contents':'read'})
 
