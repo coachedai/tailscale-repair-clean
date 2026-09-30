@@ -184,7 +184,7 @@ def main():
                 add("path", sha, "historical_submodule_not_audited", path)
 
     for ref in refs:
-        scan_text(ref, add, path_hash(ref), "ref", include_internal=False)
+        scan_text(ref, add, path_hash(ref), "ref")
 
     batch = subprocess.Popen(
         ["git","cat-file","--batch-check=%(objectname) %(objecttype) %(objectsize)"],
@@ -254,7 +254,7 @@ def main():
             continue
         if "\0" in text:
             add("blob", expected, "binary_content_in_text_blob")
-        scan_text(text, add, expected, "blob", include_internal=False)
+        scan_text(text, add, expected, "blob")
     cat.stdin.close()
     cat.wait()
     if cat.returncode != 0:
@@ -262,7 +262,7 @@ def main():
 
     for tag_id in tag_ids:
         tag = run_git(["cat-file", "tag", tag_id]).decode("utf-8", "replace")
-        scan_text(tag, add, tag_id, "tag", include_internal=False)
+        scan_text(tag, add, tag_id, "tag")
 
     log_bytes = run_git(["log","--all","--format=%H%x00%an%x00%ae%x00%cn%x00%ce%x00%B%x1e"])
     records = log_bytes.decode("utf-8","replace").split("\x1e")
@@ -281,9 +281,9 @@ def main():
                 email.lower() == "noreply@github.com"
             ):
                 add("commit",sha,"non_noreply_commit_email")
-        scan_text(author_name, add, sha, "commit", include_internal=False)
-        scan_text(committer_name, add, sha, "commit", include_internal=False)
-        scan_text(message, add, sha, "commit", include_internal=False)
+        scan_text(author_name, add, sha, "commit")
+        scan_text(committer_name, add, sha, "commit")
+        scan_text(message, add, sha, "commit")
 
     # Public commit hashes are safe provenance. Never include matched content
     # or raw historical paths in the uploaded result.

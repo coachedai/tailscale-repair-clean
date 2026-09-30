@@ -863,23 +863,19 @@ try {
                                             <RowDefinition Height="27"/>
                                             <RowDefinition Height="27"/>
                                             <RowDefinition Height="27"/>
-                                            <RowDefinition Height="27"/>
-                                            <RowDefinition Height="27"/>
-                                            <RowDefinition Height="27"/>
                                         </Grid.RowDefinitions>
                                         <TextBlock Grid.Row="0" Text="Device" Foreground="{StaticResource Faint}"/>
                                         <TextBlock Grid.Row="1" Text="Peer IP" Foreground="{StaticResource Faint}"/>
-                                        <TextBlock Grid.Row="2" Text="Status" Foreground="{StaticResource Faint}"/>
-                                        <TextBlock Grid.Row="3" Text="Route" Foreground="{StaticResource Faint}"/>
-                                        <TextBlock Grid.Row="4" Text="Latency" Foreground="{StaticResource Faint}"/>
-                                        <TextBlock Grid.Row="5" Text="Session" Foreground="{StaticResource Faint}"/>
+                                        <TextBlock Grid.Row="2" Text="Recent" Foreground="{StaticResource Faint}"/>
                                         <TextBlock x:Name="DetailPeerName" Grid.Row="0" Grid.Column="1" Text="—" Foreground="{StaticResource Value}"/>
                                         <TextBlock x:Name="DetailPeerIp" Grid.Row="1" Grid.Column="1" Text="—" Foreground="{StaticResource Value}"/>
-                                        <TextBlock x:Name="DetailPeerStatus" Grid.Row="2" Grid.Column="1" Text="—" Foreground="{StaticResource Value}"/>
-                                        <TextBlock x:Name="DetailRoute" Grid.Row="3" Grid.Column="1" Text="—" Foreground="{StaticResource Value}"/>
-                                        <TextBlock x:Name="DetailLatency" Grid.Row="4" Grid.Column="1" Text="—" Foreground="{StaticResource Value}"/>
-                                        <TextBlock x:Name="DetailConnectionTrend" Grid.Row="5" Grid.Column="1" Text="—" Foreground="{StaticResource Value}" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock x:Name="DetailConnectionTrend" Grid.Row="2" Grid.Column="1" Text="—" Foreground="{StaticResource Value}" TextTrimming="CharacterEllipsis"/>
                                     </Grid>
+                                    <StackPanel Visibility="Collapsed">
+                                        <TextBlock x:Name="DetailPeerStatus" Text="—"/>
+                                        <TextBlock x:Name="DetailRoute" Text="—"/>
+                                        <TextBlock x:Name="DetailLatency" Text="—"/>
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <StackPanel Grid.Column="4">

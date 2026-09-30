@@ -112,6 +112,21 @@ try {
             if ($window) {
                 Check ($null -ne $window.FindName('AutoRepairCheckNowButton') -and
                     $null -ne $window.FindName('OpenTailscaleButton')) 'Local quick actions are present in the native WPF tree'
+                $remoteName = $window.FindName('DetailPeerName')
+                $remoteIp = $window.FindName('DetailPeerIp')
+                $remoteTrend = $window.FindName('DetailConnectionTrend')
+                $remoteStatus = $window.FindName('DetailPeerStatus')
+                $remoteRoute = $window.FindName('DetailRoute')
+                $remoteLatency = $window.FindName('DetailLatency')
+                Check ($remoteName -and $remoteIp -and $remoteTrend -and
+                    $remoteName.Visibility -eq [System.Windows.Visibility]::Visible -and
+                    $remoteIp.Visibility -eq [System.Windows.Visibility]::Visible -and
+                    $remoteTrend.Visibility -eq [System.Windows.Visibility]::Visible) 'Remote details keeps only deeper visible context'
+                Check ($remoteStatus -and $remoteRoute -and $remoteLatency -and
+                    $remoteStatus.Visibility -eq [System.Windows.Visibility]::Collapsed -and
+                    $remoteRoute.Visibility -eq [System.Windows.Visibility]::Collapsed -and
+                    $remoteLatency.Visibility -eq [System.Windows.Visibility]::Collapsed) 'Remote dashboard duplicates stay hidden while copy bindings remain available'
+                Check ($text.Contains('Text="Recent"')) 'Remote details labels the connection trend compactly'
             }
         }
         finally {

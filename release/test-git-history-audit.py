@@ -175,16 +175,20 @@ class AuditTests(unittest.TestCase):
         self.assertIn('cross_project_content', self.reasons(result))
         self.assertNotIn(MODULE.OTHER_PROJECT, log + json.dumps(result))
 
-    def test_internal_development_provenance_is_current_source_only(self):
+    def test_internal_development_provenance_is_blocked(self):
         value = ''.join(chr(x) for x in (99,104,97,116,103,112,116))
-        direct = []
-        MODULE.scan_text(value, lambda kind, obj, reason: direct.append(reason), 'fixture', 'source')
-        self.assertIn('internal_development_provenance', direct)
-
         self.write('fixture.txt', value)
         self.commit()
         result, log = self.audit()
-        self.assertNotIn('internal_development_provenance', self.reasons(result))
+        self.assertIn('internal_development_provenance', self.reasons(result))
+        self.assertNotIn(value, log + json.dumps(result))
+
+    def test_internal_development_commit_metadata_is_blocked(self):
+        value = ''.join(chr(x) for x in (99,104,97,116,103,112,116))
+        self.write('fixture.txt', 'Synthetic fixture.\n')
+        self.commit(value)
+        result, log = self.audit()
+        self.assertIn('internal_development_provenance', self.reasons(result))
         self.assertNotIn(value, log + json.dumps(result))
 
     def test_internal_development_path_is_blocked(self):
