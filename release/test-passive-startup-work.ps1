@@ -137,7 +137,7 @@ $s
     $again=$direct.ReadSample()
     Check ($again.Observation.Backend -eq 'Running' -and $again.Observation.LocalIp -ceq $expectedIp -and $again.Observation.Version -ceq '1.90.0') 'Returned samples cannot mutate retained observations or local metadata'
     Reset-Fixture
-    $script:fixtureScript='Start-Sleep -Milliseconds 1500'+"`n"+$sampleScript
+    $script:fixtureScript='Start-Sleep -Milliseconds 3000'+"`n"+$sampleScript
     $watch=[Diagnostics.Stopwatch]::StartNew()
     Invoke-PassiveStartupHealth
     Check ($watch.ElapsedMilliseconds -lt 750) 'Startup returns before delayed observation finishes'
@@ -147,8 +147,9 @@ $s
     $jobs.Add($first)
     Invoke-PassiveStartupHealth
     Check ([object]::ReferenceEquals($first,$script:passiveStartupWork)) 'Repeated startup requests do not create overlapping workers'
-    Pump 500
-    Check ($script:pulses -ge 3 -and $script:presented -eq 0) 'WPF continues processing events while observation is delayed'
+    $pulseWatch=[Diagnostics.Stopwatch]::StartNew()
+    while($script:pulses -lt 3 -and $pulseWatch.ElapsedMilliseconds -lt 1200 -and -not $first.IsFinished){Pump 50}
+    Check ($script:pulses -ge 3 -and $script:presented -eq 0 -and -not $first.IsFinished) 'WPF continues processing events while observation is delayed'
     $watch.Restart()
     while($script:presented -eq 0 -and $watch.ElapsedMilliseconds -lt 7000){Pump 50}
     Check ($script:presented -eq 1 -and $script:notified -eq 0) 'One healthy local sample is presented without a notification'
