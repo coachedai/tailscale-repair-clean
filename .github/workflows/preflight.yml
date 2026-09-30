@@ -122,10 +122,12 @@ jobs:
       - name: Verify ordinary-user protected file and task boundaries
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_PREFLIGHT_VALIDATION: ${{ github.run_id }}
         run: .\release\test-native-permissions.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
       - name: Verify protected migration and evidence-preserving refusals
         env:
           TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+          TQR_PREFLIGHT_VALIDATION: ${{ github.run_id }}
         run: .\release\test-protected-migration.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
       - name: Confirm source and publication flags remain unchanged
         run: |

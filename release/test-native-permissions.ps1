@@ -13,10 +13,11 @@ function Failure($Record){
 # This suite follows real Windows installation acceptance in the SAME disposable
 # job, or prepares an empty isolated development fixture without vendor software.
 $releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$preflightValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_PREFLIGHT_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
 $developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/public')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-repair-clean' -or
-   -not ($developmentValidation -or $releaseValidation) -or $env:RUNNER_OS -cne 'Windows' -or
+   -not ($developmentValidation -or $preflightValidation -or $releaseValidation) -or $env:RUNNER_OS -cne 'Windows' -or
    $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or [string]::IsNullOrEmpty($env:GITHUB_RUN_ID) -or
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Disposable permission acceptance guard refused this environment.'}
 $program=Join-Path $env:ProgramData 'TailscaleQuickRepair'

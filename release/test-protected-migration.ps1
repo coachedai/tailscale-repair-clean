@@ -3,11 +3,12 @@ $ErrorActionPreference='Stop'
 # Run ONLY after this exact disposable job has installed and permission-tested
 # its own product files. No configurable system root or production-PC mode.
 $releaseValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_RELEASE_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
+$preflightValidation=($env:GITHUB_REF_NAME -ceq 'main' -and $env:TQR_PREFLIGHT_VALIDATION -ceq $env:GITHUB_RUN_ID -and -not [string]::IsNullOrEmpty($env:GITHUB_RUN_ID))
 $developmentValidation=($env:GITHUB_REF_NAME -ceq 'work/public')
 if($env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted' -or
    $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or
    $env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-repair-clean' -or
-   -not ($developmentValidation -or $releaseValidation) -or
+   -not ($developmentValidation -or $preflightValidation -or $releaseValidation) -or
    $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or [string]::IsNullOrEmpty($env:GITHUB_RUN_ID) -or
    $PSVersionTable.PSVersion.Major -ne 5){throw 'Disposable migration lab refused this environment.'}
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path

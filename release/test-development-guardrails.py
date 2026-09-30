@@ -196,6 +196,14 @@ class PassiveStartupWiring(unittest.TestCase):
         native_guard=text('release/test-native-windows.ps1')
         self.assertIn('TQR_PREFLIGHT_VALIDATION',native_guard)
         self.assertIn('$preflightValidation',native_guard)
+        for script_name in ('release/test-native-permissions.ps1','release/test-protected-migration.ps1'):
+            guarded=text(script_name)
+            self.assertIn('TQR_PREFLIGHT_VALIDATION',guarded)
+            self.assertIn('$preflightValidation',guarded)
+        for step_name in ('Verify ordinary-user protected file and task boundaries','Verify protected migration and evidence-preserving refusals'):
+            step=next(x for x in job['steps'] if x.get('name')==step_name)
+            self.assertEqual(step['env']['TQR_NATIVE_LAB_RUN'],'${{ github.run_id }}')
+            self.assertEqual(step['env']['TQR_PREFLIGHT_VALIDATION'],'${{ github.run_id }}')
         self.assertNotIn('git push',commands)
         self.assertEqual(workflow['permissions'],{'contents':'read'})
 
