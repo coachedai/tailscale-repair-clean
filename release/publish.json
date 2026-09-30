@@ -1,0 +1,10 @@
+{
+  "publish": false,
+  "channel": "preview",
+  "version": "3.0.0-rc.12",
+  "versionCode": 30001012,
+  "requiresSetup": false,
+  "publicInstaller": true,
+  "notes": "Preview candidate adds privacy-safe persisted VPN transition history and bounded VPN context in support reports, while keeping VPN handling read-only and outside repair authority.",
+  "protectedHandoff": true
+}

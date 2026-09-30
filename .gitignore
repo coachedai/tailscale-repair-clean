@@ -1,0 +1,48 @@
+# Build/release output
+dist/
+dist-public/
+artifacts/
+test-evidence/
+legacy/
+__pycache__/
+*.py[cod]
+*.zip
+*.sha256
+*.tmp
+*.bak
+*.log
+
+# Local/private Quick Repair configuration and runtime evidence
+config.json
+*.local.json
+guardian-known-good*.json
+operation.lock
+operation-coordinator.gate
+operation-recovery.json
+notification-policy.json
+notification-policy.previous.json
+notification-policy.gate
+state.json
+auto-repair-state.json
+update-result.json
+UpdateRollback/
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
+*.key
+
+# Local editor files
+.vscode/
+.idea/
+
+# Local history and exported reports, never source or release payload
+health-history*
+QuickRepair-report-*.txt
+sample-support-report.txt
+
+# Fresh-repository verification output is never source
+preflight-results.json
+history-privacy-results.json
+repository-check-results.json

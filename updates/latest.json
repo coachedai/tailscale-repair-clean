@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "channel": "stable",
+  "version": "3.0.0-rc.3",
+  "versionCode": 30001003,
+  "published": false,
+  "mandatory": false,
+  "requiresSetup": false,
+  "notes": "No release is available from this repository yet. Repository migration and Windows validation are still in progress."
+}

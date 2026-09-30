@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "repository": "coachedai/tailscale-repair-clean",
+  "repositoryId": 1398720044,
+  "owner": "coachedai",
+  "allowOtherRepositories": false,
+  "initialVisibility": "public",
+  "publicationAllowed": false,
+  "developmentBranch": "work/public",
+  "targetVisibility": "public",
+  "publicSourceAllowed": true,
+  "publicDataPolicy": {
+    "allowPersonalData": false,
+    "allowDeviceData": false,
+    "allowNetworkIdentifiers": false,
+    "allowSecrets": false,
+    "allowCrossProjectContent": false,
+    "allowInternalDevelopmentArtifacts": false,
+    "allowMachineEvidence": false,
+    "allowInternalDevelopmentProvenance": false
+  },
+  "publicHistoryMode": "retained",
+  "publicCommitPolicy": {
+    "directMainDevelopment": false,
+    "squashFeatureChanges": true,
+    "avoidIntermediatePublicCommits": true,
+    "oneReviewedCommitPerChangeSet": true
+  },
+  "publicDocumentationPolicy": {
+    "allowInternalNotes": false,
+    "allowedMarkdown": [
+      "README.md",
+      "CONTRIBUTING.md",
+      "docs/INSTALL.md",
+      "docs/PRIVACY.md"
+    ]
+  },
+  "releaseBaselineAccepted": false
+}

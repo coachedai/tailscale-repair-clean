@@ -1,0 +1,55 @@
+name: Isolated permission development lab
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: tqr-permissions-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  permissions:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - name: Exact unpublished source and privacy gate
+        shell: powershell
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne 'coachedai/tailscale-repair-clean' -or $env:GITHUB_REF_NAME -cne 'work/public') { throw 'Wrong repository or branch.' }
+          if ((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA) { throw 'Wrong source.' }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'No publication allowed.' }
+          .\release\privacy-scan.ps1 -Root .
+      - name: Build exact protected package
+        shell: powershell
+        run: .\release\build-public.ps1 -OutputDirectory .\permission-dist
+      - name: Fresh native installation and restricted-user probes
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-native-permissions.ps1 -FreshPackage .\permission-dist -EvidenceDirectory .\permission-evidence
+      - name: Final privacy and unchanged-source gate
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected source change.' }
+      - name: Preserve source and all failed evidence
+        if: always()
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Path permission-evidence -Force | Out-Null
+          git archive --format=zip --output=permission-evidence/reviewed-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+          $env:GITHUB_SHA | Set-Content permission-evidence/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: isolated-permission-evidence
+          path: permission-evidence/*
+          if-no-files-found: error

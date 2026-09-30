@@ -1,0 +1,328 @@
+name: Source and privacy preflight
+on:
+  push:
+    branches: [main, work/public]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tqr-source-preflight-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+jobs:
+  preflight:
+    if: github.repository == 'coachedai/tailscale-repair-clean'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: false
+      - name: Check bound repository identity and current source
+        run: python3 -B release/check-repository.py --ci
+      - name: Install pinned test dependency
+        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Check repository and workflow boundaries
+        run: python3 -B release/test-repository-boundary.py
+      - name: Check product documentation
+        run: python3 -B release/test-documentation.py
+      - name: Check public source readiness
+        run: python3 -B release/test-public-source-readiness.py
+      - name: Check development guardrails
+        run: python3 -B release/test-development-guardrails.py
+      - name: Check build profiles and standalone packaging boundaries
+        run: python3 -B release/test-build-profile.py
+      - name: Check released migration input boundaries
+        run: python3 -B release/test-released-migration-inputs.py
+      - name: Check Setup entry test boundaries
+        run: python3 -B release/test-setup-entry-boundaries.py
+      - name: Check physical transition verifier boundaries
+        run: python3 -B release/test-field-transition-boundaries.py
+      - name: Test the history scanner with synthetic repositories
+        run: python3 -B release/test-git-history-audit.py
+      - name: Fetch only this repository's refs for history acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' fetch --no-recurse-submodules origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/pull/*/head:refs/tqr-audit/pull/*/head' \
+            '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
+      - name: Require a clean history
+        run: python3 -B release/audit-git-history.py --result "$RUNNER_TEMP/history-privacy-results.json"
+  startup-windows:
+    if: github.repository == 'coachedai/tailscale-repair-clean' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Verify repository identity and unchanged source
+        run: python -B release/check-repository.py --ci
+      - name: Parse native PowerShell source
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Test native startup components independently of public update feeds
+        run: .\release\test-passive-startup-work.ps1 -SourceComponents -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Build validation candidate packages without release publication
+        run: |
+          .\release\build.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -ValidationProfile Development
+          .\release\finalize-package.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist"
+          .\release\add-native-setup-routing.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist"
+          .\release\test-local-control-center.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+          .\release\test-vpn-awareness.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+          .\release\build-public.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-setup" -ValidationProfile Development
+          Copy-Item "$env:RUNNER_TEMP\tqr-startup-setup\*" "$env:RUNNER_TEMP\tqr-startup-dist\" -Force
+          .\release\build-standalone-setup.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist"
+      - name: Run existing packaged runtime regression tests
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify passive health policy and packaged wiring
+        run: .\release\test-passive-startup-health.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify synthetic sleep and network transition routing
+        run: .\release\test-reliability-transitions.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Test background collection and WPF responsiveness
+        run: .\release\test-passive-startup-work.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify repository destinations and protected handoff
+        run: .\release\test-update-channels.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify Update Guardian recovery and retry boundaries
+        run: .\release\test-update-guardian.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Test standalone integrity and synthetic configuration preservation
+        run: .\release\test-standalone-setup.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify native repair policy and bounded local status
+        run: |
+          .\release\test-auto-repair-policy.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+          .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Test installed service and full scheduled recurrence on an empty runner
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: |
+          $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          & $windowsPowerShell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\release\test-native-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Native Windows PowerShell 5.1 lab failed.' }
+      - name: Require independent recurrence timing and trigger attribution
+        run: |
+          . .\release\trace-native-recurrence.ps1
+          $trace=Get-Content "$env:RUNNER_TEMP\tqr-startup-evidence\native-recurrence-trace.json" -Raw|ConvertFrom-Json
+          if($trace.source -cne $env:GITHUB_SHA -or -not $trace.channelRestored -or -not (Test-NativeRecurrenceAttribution $trace)){throw 'Independent recurrence attribution did not pass.'}
+      - name: Verify ordinary-user protected file and task boundaries
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-native-permissions.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Verify protected migration and evidence-preserving refusals
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-protected-migration.ps1 -OutputDirectory "$env:RUNNER_TEMP\tqr-startup-dist" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-startup-evidence"
+      - name: Confirm source and publication flags remain unchanged
+        run: |
+          python -B release/check-repository.py --ci
+          if ($LASTEXITCODE -ne 0) { throw 'Final source check failed.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Tests changed tracked source.' }
+      - name: Preserve only synthetic startup test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-tests
+          path: |
+            ${{ runner.temp }}/tqr-startup-evidence/passive-startup-health-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/passive-startup-work-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/passive-startup-work-source-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/reliability-transition-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/source-syntax-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/standalone-setup-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/update-channel-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/update-guardian-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/local-control-center-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/vpn-awareness-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/native-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/backend-report-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/local-history-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/update-routing-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/connection-quality-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/smart-notifications-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/diagnostics-polish-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/progress-reset-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/support-export-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/auto-repair-worker.json
+            ${{ runner.temp }}/tqr-startup-evidence/auto-background-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/auto-repair-policy.json
+            ${{ runner.temp }}/tqr-startup-evidence/auto-repair-local-status.json
+            ${{ runner.temp }}/tqr-startup-evidence/native-windows-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/native-recurrence-trace.json
+            ${{ runner.temp }}/tqr-startup-evidence/native-permission-results.json
+            ${{ runner.temp }}/tqr-startup-evidence/protected-migration-results.json
+            ${{ runner.temp }}/tqr-startup-dist/build-validation.json
+          if-no-files-found: ignore
+      - name: Preserve verified candidate packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-validation-packages
+          path: |
+            ${{ runner.temp }}/tqr-startup-dist/TailscaleQuickRepair-*.zip
+            ${{ runner.temp }}/tqr-startup-dist/TailscaleQuickRepair-*.exe
+            ${{ runner.temp }}/tqr-startup-dist/*.sha256
+            ${{ runner.temp }}/tqr-startup-dist/build-validation.json
+          if-no-files-found: error
+  migration-inputs:
+    # This isolated job stages only two fixed, hash-verified Actions artifacts.
+    # It has read-only repository and Actions access and executes no installer.
+    if: false && github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Verify bound repository and source
+        run: python -B release/check-repository.py --ci
+      - name: Stage only the pinned distribution files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $expected='1bffdac4e147bb97f79807235a260cc154f4bfebedac5d94ae65944c9065cc2b'
+          $actual=(Get-FileHash -LiteralPath 'release/prepare-released-migration.py' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -cne $expected){throw 'The reviewed GET-only staging script changed.'}
+          python -B release/prepare-released-migration.py
+          if($LASTEXITCODE -ne 0){throw 'Verified migration inputs are unavailable.'}
+      - name: Preserve exact inputs for the read-only migration job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: released-migration-inputs
+          path: |
+            ${{ runner.temp }}/tqr-released-migration-inputs/TailscaleQuickRepair-SetupPackage-3.0.0-rc.11.zip
+            ${{ runner.temp }}/tqr-released-migration-inputs/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe
+            ${{ runner.temp }}/tqr-released-migration-inputs/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip
+            ${{ runner.temp }}/tqr-released-migration-inputs/input-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+  released-migration:
+    if: false && github.repository == 'coachedai/tailscale-repair-clean' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: [preflight, migration-inputs]
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Verify repository identity and unchanged source
+        run: python -B release/check-repository.py --ci
+      - name: Parse migration source on native Windows PowerShell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-migration-evidence"
+      - name: Receive verified inputs from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: released-migration-inputs
+          path: ${{ runner.temp }}/tqr-released-migration-inputs
+      - name: Require same-source input receipt
+        run: |
+          $r=Get-Content "$env:RUNNER_TEMP\tqr-released-migration-inputs\input-receipt.json" -Raw|ConvertFrom-Json
+          if($r.passed -isnot [bool] -or -not $r.passed -or $r.testSource -cne $env:GITHUB_SHA -or $r.predecessorArtifactId -ne 11103704932 -or $r.candidateArtifactId -ne 11107315062){throw 'Verified input provenance is missing.'}
+      - name: Verify installed RC11 to exact RC12 migration and rollback
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: |
+          .\release\test-released-setup-migration.ps1 `
+            -ReleasedPackage "$env:RUNNER_TEMP\tqr-released-migration-inputs\TailscaleQuickRepair-SetupPackage-3.0.0-rc.11.zip" `
+            -CandidateInstaller "$env:RUNNER_TEMP\tqr-released-migration-inputs\TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe" `
+            -EvidenceDirectory "$env:RUNNER_TEMP\tqr-migration-evidence"
+      - name: Require genuine migration evidence and unchanged source
+        run: |
+          $r=Get-Content "$env:RUNNER_TEMP\tqr-migration-evidence\released-setup-migration-results.json" -Raw|ConvertFrom-Json
+          if ($r.passed -isnot [bool] -or -not $r.passed -or $r.testSource -cne $env:GITHUB_SHA -or -not $r.cleanupPassed) { throw 'Genuine migration evidence is incomplete.' }
+          python -B release/check-repository.py --ci
+          if ($LASTEXITCODE -ne 0) { throw 'Final source check failed.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Migration test changed tracked source.' }
+      - name: Preserve only typed migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-migration-evidence
+          path: |
+            ${{ runner.temp }}/tqr-migration-evidence/source-syntax-results.json
+            ${{ runner.temp }}/tqr-migration-evidence/released-setup-migration-results.json
+            ${{ runner.temp }}/tqr-released-migration-inputs/input-receipt.json
+          if-no-files-found: ignore
+  setup-entry:
+    if: false && github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: [preflight, migration-inputs]
+    runs-on: windows-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Verify repository identity and unchanged source
+        run: python -B release/check-repository.py --ci
+      - name: Parse entry-test source on native Windows PowerShell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-entry-evidence"
+      - name: Receive exact inputs from this workflow run
+        uses: actions/download-artifact@v4
+        with:
+          name: released-migration-inputs
+          path: ${{ runner.temp }}/tqr-entry-inputs
+      - name: Test actual Setup cancellation, upgrade and installed relaunch
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: |
+          .\release\test-setup-entry.ps1 `
+            -InputDirectory "$env:RUNNER_TEMP\tqr-entry-inputs" `
+            -EvidenceDirectory "$env:RUNNER_TEMP\tqr-entry-evidence"
+      - name: Require entry evidence and unchanged source
+        run: |
+          $r=Get-Content "$env:RUNNER_TEMP\tqr-entry-evidence\setup-entry-results.json" -Raw|ConvertFrom-Json
+          if($r.passed -isnot [bool] -or -not $r.passed -or $r.testSource -cne $env:GITHUB_SHA -or -not $r.cleanupPassed -or -not $r.setupEntryExecuted){throw 'Setup entry evidence is incomplete.'}
+          if($r.desktopElevationTested -ne $false -or $r.publicFeedVerified -ne $false){throw 'Entry evidence exceeded its tested scope.'}
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Final source check failed.'}
+          git diff --exit-code
+          if($LASTEXITCODE -ne 0){throw 'Entry test changed tracked source.'}
+      - name: Preserve only typed Setup entry results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-entry-evidence
+          path: |
+            ${{ runner.temp }}/tqr-entry-evidence/source-syntax-results.json
+            ${{ runner.temp }}/tqr-entry-evidence/setup-entry-results.json
+          if-no-files-found: ignore

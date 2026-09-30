@@ -1,0 +1,192 @@
+name: Assemble current RC physical acceptance pack
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  pack:
+    if: false && github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && github.ref_name == 'main'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+
+      - name: Require exact disarmed candidate source
+        run: |
+          $ErrorActionPreference='Stop'
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Repository identity check failed.'}
+          if((git rev-parse HEAD).Trim() -cne $env:GITHUB_SHA){throw 'Wrong source revision.'}
+          $version=Get-Content version.json -Raw|ConvertFrom-Json
+          $publish=Get-Content release/publish.json -Raw|ConvertFrom-Json
+          $preview=Get-Content release/preview-publish.json -Raw|ConvertFrom-Json
+          if([string]$version.channel -cne 'preview' -or [string]$version.version -notmatch '^3\.0\.0-rc\.\d+$'){throw 'Field packs are only assembled for a numbered 3.0 release candidate.'}
+          if($publish.publish -isnot [bool] -or [bool]$publish.publish -or $preview.publish -isnot [bool] -or [bool]$preview.publish){throw 'Publishing must remain disarmed while assembling a field pack.'}
+          .\release\privacy-scan.ps1 -Root .
+
+      - name: Stage the exact migration-accepted candidate bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $expected='1bffdac4e147bb97f79807235a260cc154f4bfebedac5d94ae65944c9065cc2b'
+          $actual=(Get-FileHash -LiteralPath 'release/prepare-released-migration.py' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($actual -cne $expected){throw 'The reviewed GET-only candidate staging script changed.'}
+          python -B release/prepare-released-migration.py
+          if($LASTEXITCODE -ne 0){throw 'Exact migration-accepted candidate bytes are unavailable.'}
+
+          $source=Join-Path $env:RUNNER_TEMP 'tqr-released-migration-inputs'
+          $receipt=Get-Content (Join-Path $source 'input-receipt.json') -Raw|ConvertFrom-Json
+          if($receipt.schema -ne 2 -or $receipt.passed -isnot [bool] -or -not $receipt.passed -or
+             [string]$receipt.candidateSource -cne '36bd301fdff27737c2a0e3ad2375ce277ffc955c' -or
+             [int64]$receipt.candidateArtifactId -ne 11107315062 -or
+             [string]$receipt.candidateSha256 -cne 'ba6c7ee49c01668c79764ff4b986abcac38f21f1cd0699ee17c75df761d27a17' -or
+             [string]$receipt.payloadSha256 -cne 'f91f962387813765070af7892cf926dc3504778538a8535521a6cb03794cfac6'){
+            throw 'Candidate receipt is not the migration-accepted RC12 identity.'
+          }
+
+          $artifactJson=& gh api -H 'Accept: application/vnd.github+json' "repos/$env:GITHUB_REPOSITORY/actions/artifacts/$([int64]$receipt.candidateArtifactId)"
+          if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($artifactJson)){throw 'Pinned candidate artifact metadata could not be read.'}
+          $artifact=$artifactJson|ConvertFrom-Json
+          if([string]$artifact.name -cne 'private-candidate-packages' -or [bool]$artifact.expired -or
+             [string]$artifact.workflow_run.head_sha -cne [string]$receipt.candidateSource){
+            throw 'Pinned candidate artifact metadata drifted.'
+          }
+          $runJson=& gh api -H 'Accept: application/vnd.github+json' "repos/$env:GITHUB_REPOSITORY/actions/runs/$([int64]$artifact.workflow_run.id)"
+          if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($runJson)){throw 'Pinned candidate verification run could not be read.'}
+          $run=$runJson|ConvertFrom-Json
+          if([string]$run.head_sha -cne [string]$receipt.candidateSource -or [string]$run.conclusion -cne 'success' -or
+             [string]$run.path -cne '.github/workflows/preflight.yml'){
+            throw 'Pinned candidate did not come from its successful full candidate workflow.'
+          }
+
+          $versionInfo=Get-Content version.json -Raw|ConvertFrom-Json
+          $version=[string]$versionInfo.version
+          if($version -cne '3.0.0-rc.12' -or [int64]$versionInfo.versionCode -ne 30001012){throw 'Field-pack source version no longer matches the pinned RC12 candidate.'}
+
+          $pack=Join-Path $env:RUNNER_TEMP 'tqr-field-pack'
+          $candidate=Join-Path $pack 'candidate'
+          if(Test-Path $pack){Remove-Item $pack -Recurse -Force}
+          New-Item -ItemType Directory -Path $candidate -Force|Out-Null
+          $exe=Join-Path $source 'TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe'
+          $setup=Join-Path $source 'TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip'
+          Copy-Item -LiteralPath $exe -Destination $candidate
+          Copy-Item -LiteralPath $setup -Destination $candidate
+          ([string]$receipt.candidateSha256) | Set-Content -LiteralPath (Join-Path $candidate 'TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe.sha256') -Encoding ascii -NoNewline
+          ([string]$receipt.payloadSha256) | Set-Content -LiteralPath (Join-Path $candidate 'TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip.sha256') -Encoding ascii -NoNewline
+          foreach($pair in @(
+            @('TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe','TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe.sha256'),
+            @('TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip','TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip.sha256')
+          )){
+            $path=Join-Path $candidate $pair[0]
+            $declared=(Get-Content -LiteralPath (Join-Path $candidate $pair[1]) -Raw).Trim().ToLowerInvariant()
+            $actual=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if($declared -cne $actual){throw ('Candidate sidecar mismatch: '+$pair[0])}
+          }
+
+          $scan=Join-Path $env:RUNNER_TEMP ('tqr-current-field-pack-'+[Guid]::NewGuid().ToString('N'))
+          Expand-Archive -LiteralPath $setup -DestinationPath $scan
+          .\release\privacy-scan.ps1 -Root $scan -SkipRepositoryIdentity
+          Remove-Item -LiteralPath $scan -Recurse -Force
+
+          [ordered]@{
+            schema=2
+            product='Tailscale Quick Repair'
+            version=$version
+            versionCode=[int64]$versionInfo.versionCode
+            packSource=$env:GITHUB_SHA
+            candidateSource=[string]$receipt.candidateSource
+            candidateArtifactId=[int64]$receipt.candidateArtifactId
+            candidateSha256=[string]$receipt.candidateSha256
+            setupSha256=[string]$receipt.payloadSha256
+            verification='Exact candidate bytes are the same hash-pinned RC12 inputs used by the RC11-to-RC12 migration acceptance.'
+            publicRelease=$false
+          }|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $pack 'FIELD-PACK-IDENTITY.json') -Encoding UTF8
+
+      - name: Add privacy-safe physical acceptance instructions
+        run: |
+          $ErrorActionPreference='Stop'
+          $pack=Join-Path $env:RUNNER_TEMP 'tqr-field-pack'
+          Copy-Item .\release\field-verify.ps1 (Join-Path $pack 'VERIFY-RC12-AFTER-INSTALL.ps1')
+          Copy-Item .\release\field-transition-verify.ps1 (Join-Path $pack 'VERIFY-RC12-TRANSITIONS.ps1')
+          @(
+            'Tailscale Quick Repair 3.0.0-rc.12 - private physical acceptance pack',
+            '',
+            'This is NOT a public release. The installer is the exact hash-pinned RC12 candidate already used by the successful RC11-to-RC12 migration tests.',
+            '',
+            'Safe first-pass check:',
+            '1. Keep your current working installer/package somewhere safe. Do not delete your configuration.',
+            '2. In Quick Repair, leave Automatic Repair OFF for the first install check.',
+            '3. Exit Quick Repair from the tray icon; closing the window alone only hides it.',
+            '4. Run candidate\TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe normally.',
+            '5. If Windows asks for administrator approval, approve it only from the SAME Windows account that launched Setup.',
+            '6. Confirm Quick Repair opens and shows version 3.0.0-rc.12.',
+            '7. Confirm closing X hides to tray, tray Open restores it, and tray Exit closes it.',
+            '8. Open Details and confirm Local details can populate without running a remote check, and Open Tailscale launches the installed Tailscale app.',
+            '9. With Automatic Repair still OFF, click Refresh in Local details and confirm it refreshes local status without starting a repair.',
+            '10. Run VERIFY-RC12-AFTER-INSTALL.ps1 with PowerShell. It should report RC12 physical post-Setup verification passed.',
+            '',
+            'After the first-pass verifier is green, VERIFY-RC12-TRANSITIONS.ps1 can perform read-only physical transition checks with Automatic Repair OFF.',
+            'VPN: run .\VERIFY-RC12-TRANSITIONS.ps1 -Mode Vpn, then connect or disconnect your normal VPN once.',
+            'Sleep/resume: run .\VERIFY-RC12-TRANSITIONS.ps1 -Mode SleepResume, then put Windows to sleep once and resume.',
+            'Reboot/sign-in: run .\VERIFY-RC12-TRANSITIONS.ps1 -Mode RebootBefore, reboot normally, then run it again with -Mode RebootAfter.',
+            '',
+            'The verifiers read no target value and save only named PASS/FAIL checks, version and generic stop points. Reboot comparison state contains hashes only.',
+            'Do NOT deliberately break Windows networking, reset adapters, uninstall Tailscale, change another VPN, force a reboot, or interrupt storage for this first pass.',
+            'Do not upload screenshots, raw logs, IP addresses, device names or account details. Report only pass/fail plus the app version and which numbered step failed.',
+            '',
+            'Later physical transition tests (UAC cancellation/retry, reboot/sign-in, sleep/resume and VPN transitions) remain separate acceptance work and should only be run deliberately.'
+          )|Set-Content -LiteralPath (Join-Path $pack 'START-HERE.txt') -Encoding UTF8
+
+      - name: Final field-pack privacy and identity gate
+        run: |
+          $ErrorActionPreference='Stop'
+          $pack=Join-Path $env:RUNNER_TEMP 'tqr-field-pack'
+          $support=Join-Path $env:RUNNER_TEMP ('tqr-field-support-'+[Guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $support -Force|Out-Null
+          foreach($name in @('FIELD-PACK-IDENTITY.json','START-HERE.txt','VERIFY-RC12-AFTER-INSTALL.ps1','VERIFY-RC12-TRANSITIONS.ps1')){
+            Copy-Item -LiteralPath (Join-Path $pack $name) -Destination $support
+          }
+          .\release\privacy-scan.ps1 -Root $support -SkipRepositoryIdentity
+          Remove-Item -LiteralPath $support -Recurse -Force
+          $identity=Get-Content (Join-Path $pack 'FIELD-PACK-IDENTITY.json') -Raw|ConvertFrom-Json
+          if($identity.schema -ne 2 -or [string]$identity.packSource -cne $env:GITHUB_SHA -or [bool]$identity.publicRelease -or
+             [string]$identity.candidateSource -cne '36bd301fdff27737c2a0e3ad2375ce277ffc955c' -or
+             [int64]$identity.candidateArtifactId -ne 11107315062){
+            throw 'Field-pack identity is not bound to the exact accepted RC12 candidate.'
+          }
+          $required=@(
+            'FIELD-PACK-IDENTITY.json',
+            'START-HERE.txt',
+            'VERIFY-RC12-AFTER-INSTALL.ps1',
+            'VERIFY-RC12-TRANSITIONS.ps1',
+            'candidate/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe',
+            'candidate/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe.sha256',
+            'candidate/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip',
+            'candidate/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip.sha256'
+          )
+          $actual=@(Get-ChildItem -LiteralPath $pack -File -Recurse|ForEach-Object{$_.FullName.Substring($pack.Length+1).Replace('\','/')}|Sort-Object)
+          $expected=@($required|Sort-Object)
+          if(($actual -join [char]0) -cne ($expected -join [char]0)){throw 'Field pack contains an unexpected file set.'}
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Final repository identity check failed.'}
+          git diff --exit-code
+          if($LASTEXITCODE -ne 0){throw 'Field-pack assembly changed tracked source.'}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: current-rc-physical-acceptance-pack
+          path: ${{ runner.temp }}/tqr-field-pack/**
+          if-no-files-found: error
+          retention-days: 30

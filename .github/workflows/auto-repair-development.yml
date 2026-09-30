@@ -1,0 +1,455 @@
+name: Auto Repair 2.0 development verification
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: tqr-auto-repair-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  history-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          submodules: false
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - name: Require exact isolated history source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "coachedai/tailscale-repair-clean"
+          test "$GITHUB_REF_NAME" = "work/public"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          origin="$(git remote get-url origin)"
+          case "$origin" in
+            https://github.com/coachedai/tailscale-repair-clean|https://github.com/coachedai/tailscale-repair-clean.git) ;;
+            *) echo "Unexpected origin" >&2; exit 2 ;;
+          esac
+      - name: Test history audit against synthetic local repositories
+        shell: bash
+        run: python3 release/test-git-history-audit.py
+      - name: Fetch Tailscale refs read-only without submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune --no-recurse-submodules origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/pull/*/head:refs/tqr-audit/pull/*/head' \
+            '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Require zero history privacy findings
+        shell: bash
+        run: python3 release/audit-git-history.py --result history-privacy-results.json
+      - name: Preserve hashed history audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-history-privacy-results
+          path: history-privacy-results.json
+          if-no-files-found: error
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    outputs:
+      preview_publish: ${{ steps.preview_intent.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - name: Require exact isolated development source
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-repair-clean' -or $env:GITHUB_REF_NAME -ne 'work/public') { throw 'Wrong repository or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '^https://github.com/coachedai/tailscale-repair-clean(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout mismatch.' }
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Development cannot publish.' }
+      - name: Read Preview publication intent
+        id: preview_intent
+        shell: pwsh
+        run: |
+          $intent = Get-Content release/preview-publish.json -Raw | ConvertFrom-Json
+          if ([int]$intent.schema -ne 1 -or $intent.publish -isnot [bool] -or $intent.prerelease -isnot [bool] -or -not [bool]$intent.prerelease) {
+            throw 'Preview publication intent is invalid.'
+          }
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          if ([bool]$intent.publish) {
+            if ([string]$version.version -notmatch '^3\.0\.0-rc\.[1-9][0-9]*$') { throw 'Preview publication is restricted to 3.0.0-rc.N versions.' }
+            if ([string]$publish.version -cne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) { throw 'Preview publication metadata does not match version.json.' }
+            if ([string]$publish.channel -cne 'preview' -or $publish.publish -isnot [bool] -or [bool]$publish.publish) { throw 'Preview publication must use the preview channel while Stable publication remains disabled.' }
+            if ($publish.protectedHandoff -isnot [bool] -or -not [bool]$publish.protectedHandoff) { throw 'Preview RC publication requires the protected update handoff.' }
+          }
+          "publish=$(([bool]$intent.publish).ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+      - name: Privacy and repository preflight
+        id: source_privacy
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Parse all PowerShell source before build and native tests
+        shell: powershell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory .\test-evidence
+      - name: Release publication pipeline contract
+        shell: powershell
+        run: .\release\test-release-pipeline.ps1 -EvidenceDirectory .\test-evidence
+      - name: Preview publication pipeline contract
+        shell: powershell
+        run: .\release\test-preview-pipeline.ps1 -EvidenceDirectory .\test-evidence
+      - name: Build both existing delivery paths
+        shell: powershell
+        env:
+          TQR_UPDATER_SELFTEST_TOKEN: ${{ github.token }}
+        run: |
+          .\release\build.ps1 -OutputDirectory .\dist
+          .\release\finalize-package.ps1 -OutputDirectory .\dist
+          .\release\add-native-setup-routing.ps1 -OutputDirectory .\dist
+          .\release\test-local-control-center.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+          .\release\test-vpn-awareness.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+          .\release\build-public.ps1 -OutputDirectory .\dist-public
+          Copy-Item .\dist-public\* .\dist\ -Force
+      - name: Preserve every existing native packaged gate
+        shell: powershell
+        run: .\release\test-packaged-runtime.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Update channel trust and preference gates
+        shell: powershell
+        run: .\release\test-update-channels.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Native Auto Repair policy and state gates
+        shell: powershell
+        run: .\release\test-auto-repair-policy.ps1 -EvidenceDirectory .\test-evidence
+      - name: Native bounded local status gates
+        shell: powershell
+        run: .\release\test-auto-repair-local-status.ps1 -EvidenceDirectory .\test-evidence
+      - name: Passive startup health local-only gates
+        shell: powershell
+        run: .\release\test-passive-startup-health.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Real installed Windows service and full recurrence gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-native-windows.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Require independent clock and exact trigger attribution
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . .\release\trace-native-recurrence.ps1
+          $trace = Get-Content .\test-evidence\native-recurrence-trace.json -Raw | ConvertFrom-Json
+          if ($trace.source -cne $env:GITHUB_SHA -or -not $trace.channelRestored -or -not (Test-NativeRecurrenceAttribution $trace)) {
+            throw 'Independent recurrence attribution did not pass. Preserve the original trace and do not publish.'
+          }
+      - name: Ordinary-user protected file and task gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-native-permissions.ps1 -EvidenceDirectory .\test-evidence
+      - name: Protected migration and evidence-preserving refusal gates
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-protected-migration.ps1 -OutputDirectory .\dist -EvidenceDirectory .\test-evidence
+      - name: Final source privacy and no-publication check
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publication forbidden.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Validation unexpectedly changed source.' }
+      - name: Preserve exact source snapshot
+        if: always() && steps.source_privacy.outcome == 'success'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path test-evidence -Force | Out-Null
+          git archive --format=zip --output=test-evidence/reviewed-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+          $env:GITHUB_SHA | Set-Content test-evidence/source-commit.txt
+      - name: Preserve native evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-repair-native-evidence
+          path: test-evidence/*
+          if-no-files-found: error
+      - name: Preserve validated development packages
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-repair-regression-packages
+          path: dist/*
+          if-no-files-found: error
+  released-upgrade:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-repair-regression-packages
+          path: upgrade-dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-repair-native-evidence
+          path: upstream-evidence
+      - name: Recheck source privacy and isolation
+        shell: powershell
+        run: .\release\privacy-scan.ps1 -Root .
+      - name: Parse upgrade source before any fixture mutation
+        shell: powershell
+        run: .\release\test-source-syntax.ps1 -EvidenceDirectory .\upgrade-evidence
+      - name: Preserve one-time published RC1 field bridge acceptance
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-published-rc1-bridge.ps1 -EvidenceDirectory .\upgrade-evidence
+      - name: Validate published RC1 to current Early-access candidate
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-preview-upgrade.ps1 -OutputDirectory .\upgrade-dist -EvidenceDirectory .\upgrade-evidence
+      - name: Upgrade genuine released files and existing tasks with the new Setup core
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-released-upgrade.ps1 -OutputDirectory .\upgrade-dist -UpstreamEvidence .\upstream-evidence -EvidenceDirectory .\upgrade-evidence
+      - name: Recover files after killed Setup and killed recovery
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-interrupted-setup-recovery.ps1 -OutputDirectory .\upgrade-dist -EvidenceDirectory .\upgrade-evidence
+      - name: Verify protected-update handoff from released 5.2.1
+        shell: powershell
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\\release\\test-protected-update-handoff.ps1 -OutputDirectory .\\upgrade-dist -EvidenceDirectory .\\upgrade-evidence
+      - name: Final no-publication and unchanged-source gate
+        shell: powershell
+        run: |
+          .\release\privacy-scan.ps1 -Root .
+          if ((Get-Content release/publish.json -Raw | ConvertFrom-Json).publish) { throw 'Publication forbidden.' }
+          git diff --exit-code
+          if ($LASTEXITCODE -ne 0) { throw 'Unexpected source change.' }
+      - name: Prove field helper is not shipped
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $v = [string](Get-Content version.json -Raw | ConvertFrom-Json).version
+          $packages = @(
+            @(Get-ChildItem .\upgrade-dist -Filter "TailscaleQuickRepair-$v.zip" -File),
+            @(Get-ChildItem .\upgrade-dist -Filter "TailscaleQuickRepair-SetupPackage-$v.zip" -File)
+          )
+          $packages = @($packages | ForEach-Object { $_ })
+          if ($packages.Count -ne 2) { throw 'Exact candidate packages are required for field-helper isolation.' }
+          foreach ($package in $packages) {
+            $archive = [IO.Compression.ZipFile]::OpenRead($package.FullName)
+            try {
+              foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName.Replace('\','/')
+                if ($name -match '(^|/)(field-preview|test-field-preview)\.ps1$' -or $name -match 'phase6\.4-field-acceptance\.md$') {
+                  throw ('Developer-only field tooling leaked into shipping package: ' + $name)
+                }
+              }
+            } finally { $archive.Dispose() }
+          }
+      - name: Preserve released-upgrade evidence including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: released-upgrade-evidence
+          path: upgrade-evidence/*
+          if-no-files-found: error
+  preview-publish:
+    needs: [verify, released-upgrade, history-privacy]
+    if: false && (needs.verify.outputs.preview_publish == 'true' && needs.released-upgrade.result == 'success' && needs.history-privacy.result == 'success')
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - name: Require exact armed Preview source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -ne 'coachedai/tailscale-repair-clean' -or $env:GITHUB_REF_NAME -ne 'work/public') { throw 'Wrong repository or branch.' }
+          if ((git remote get-url origin).Trim() -notmatch '(?i)(github\.com[:/])coachedai/tailscale-repair-clean(?:\.git)?$') { throw 'Wrong origin.' }
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw 'Checkout mismatch.' }
+          $remoteHead = ((git ls-remote origin refs/heads/work/public) -split '\s+')[0]
+          if ($LASTEXITCODE -ne 0 -or $remoteHead -ne $env:GITHUB_SHA) { throw 'Branch moved before Preview publication.' }
+          $intent = Get-Content release/preview-publish.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          if ([int]$intent.schema -ne 1 -or $intent.publish -isnot [bool] -or -not [bool]$intent.publish -or -not [bool]$intent.prerelease) { throw 'Preview publication is not armed.' }
+          if ([string]$version.version -notmatch '^3\.0\.0-rc\.[1-9][0-9]*$') { throw 'Only a 3.0.0-rc.N candidate may enter Early access.' }
+          if ([string]$publish.channel -cne 'preview' -or [bool]$publish.publish) { throw 'Stable publication must remain disabled.' }
+          if ([string]$publish.version -cne [string]$version.version -or [int64]$publish.versionCode -ne [int64]$version.versionCode) { throw 'Preview metadata mismatch.' }
+          .\release\privacy-scan.ps1 -Root .
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-repair-regression-packages
+          path: preview-dist
+      - name: Preview publisher reuses the exact validated package artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $v = [string]$version.version
+          $normal = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-$v.zip" -File)
+          $setupZip = @(Get-ChildItem preview-dist -Filter "TailscaleQuickRepair-SetupPackage-$v.zip" -File)
+          if ($normal.Count -ne 1 -or $setupZip.Count -ne 1) { throw 'Exact validated Preview package assets are missing.' }
+          foreach ($file in @($normal[0],$setupZip[0])) {
+            $sidecar = $file.FullName + '.sha256'
+            if (-not (Test-Path -LiteralPath $sidecar -PathType Leaf)) { throw ('Missing SHA-256 sidecar: ' + $file.Name) }
+            $expected = (Get-Content -LiteralPath $sidecar -Raw).Trim().ToLowerInvariant()
+            $actual = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expected -notmatch '^[a-f0-9]{64}$' -or $actual -cne $expected) { throw ('Validated asset hash mismatch: ' + $file.Name) }
+          }
+          foreach ($zip in @($normal[0],$setupZip[0])) {
+            $scan = Join-Path $env:RUNNER_TEMP ('tqr-preview-scan-' + [Guid]::NewGuid().ToString('N'))
+            Expand-Archive -LiteralPath $zip.FullName -DestinationPath $scan
+            .\release\privacy-scan.ps1 -Root $scan -SkipRepositoryIdentity
+            Remove-Item -LiteralPath $scan -Recurse -Force
+          }
+      - name: Create or resume exact GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $remoteHead = ((git ls-remote origin refs/heads/work/public) -split '\s+')[0]
+          if ($LASTEXITCODE -ne 0 -or $remoteHead -ne $env:GITHUB_SHA) { throw 'Branch moved before Preview publication.' }
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $v = [string]$version.version
+          $tag = "v$v"
+          $assets = @(
+            (Get-Item "preview-dist\TailscaleQuickRepair-$v.zip"),
+            (Get-Item "preview-dist\TailscaleQuickRepair-$v.zip.sha256"),
+            (Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip"),
+            (Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip.sha256")
+          )
+          $notes = [string]$publish.notes
+          if ([string]::IsNullOrWhiteSpace($notes)) { $notes = "Tailscale Quick Repair $v" }
+          $notesFile = Join-Path $env:RUNNER_TEMP 'preview-release-notes.txt'
+          Set-Content -LiteralPath $notesFile -Value $notes -Encoding UTF8
+          function Get-Release {
+            $json = & gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>$null
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return $null }
+            return ($json | ConvertFrom-Json)
+          }
+          function Test-Asset($Release,[IO.FileInfo]$Local) {
+            $remote = @($Release.assets | Where-Object { [string]$_.name -ceq $Local.Name }) | Select-Object -First 1
+            if (-not $remote) { return $false }
+            if ([int64]$remote.size -ne [int64]$Local.Length) { throw ('Existing prerelease asset has wrong size: ' + $Local.Name) }
+            if ($remote.PSObject.Properties.Name -contains 'digest' -and -not [string]::IsNullOrWhiteSpace([string]$remote.digest)) {
+              $expected = 'sha256:' + (Get-FileHash -LiteralPath $Local.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ([string]$remote.digest -cne $expected) { throw ('Existing prerelease asset has wrong digest: ' + $Local.Name) }
+            }
+            return $true
+          }
+          $release = Get-Release
+          if (-not $release) {
+            & gh release create $tag --target $env:GITHUB_SHA --title "Tailscale Quick Repair $v" --notes-file $notesFile --prerelease
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create exact Preview prerelease.' }
+            $release = Get-Release
+          }
+          if (-not $release -or -not [bool]$release.prerelease -or [bool]$release.draft) { throw 'Existing release is not the expected published prerelease.' }
+          foreach ($asset in $assets) {
+            if (Test-Asset $release $asset) { continue }
+            & gh release upload $tag $asset.FullName
+            if ($LASTEXITCODE -ne 0) { throw ('Could not upload Preview asset: ' + $asset.Name) }
+            $release = Get-Release
+            if (-not (Test-Asset $release $asset)) { throw ('Uploaded Preview asset could not be verified: ' + $asset.Name) }
+          }
+      - name: Prepare exact Preview manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = Get-Content version.json -Raw | ConvertFrom-Json
+          $publish = Get-Content release/publish.json -Raw | ConvertFrom-Json
+          $v = [string]$version.version
+          $code = [int64]$version.versionCode
+          $normal = Get-Item "preview-dist\TailscaleQuickRepair-$v.zip"
+          $setupZip = Get-Item "preview-dist\TailscaleQuickRepair-SetupPackage-$v.zip"
+          $tag = "v$v"
+          $assetBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag"
+          $manifest = [ordered]@{
+            schema = 1
+            channel = 'preview'
+            version = $v
+            versionCode = $code
+            published = $true
+            publishedAt = [DateTime]::UtcNow.ToString('o')
+            mandatory = $false
+            requiresSetup = [bool]$publish.requiresSetup
+            protectedHandoff = [bool]$publish.protectedHandoff
+            notes = [string]$publish.notes
+            package = [ordered]@{url="$assetBase/$($normal.Name)";sha256=(Get-Content ($normal.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$normal.Length}
+            setup = [ordered]@{url="$assetBase/$($setupZip.Name)";sha256=(Get-Content ($setupZip.FullName+'.sha256') -Raw).Trim().ToLowerInvariant();size=[int64]$setupZip.Length}
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'preview.json'
+          [IO.File]::WriteAllText($path,($manifest|ConvertTo-Json -Depth 7),(New-Object Text.UTF8Encoding($false)))
+      - name: Disarm Preview publication
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $remoteHead = ((git ls-remote origin refs/heads/work/public) -split '\s+')[0]
+          if ($LASTEXITCODE -ne 0 -or $remoteHead -ne $env:GITHUB_SHA) { throw 'Branch moved before Preview disarm.' }
+          $intent = Get-Content release/preview-publish.json -Raw | ConvertFrom-Json
+          $intent.publish = $false
+          $intent | ConvertTo-Json -Depth 4 | Set-Content release/preview-publish.json -Encoding UTF8
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release/preview-publish.json
+          git commit -m "Disarm Preview publication [skip ci]"
+          if ($LASTEXITCODE -ne 0) { throw 'Preview disarm commit failed.' }
+          git push origin HEAD:refs/heads/work/public
+          if ($LASTEXITCODE -ne 0) { throw 'Preview disarm push failed; Preview manifest remains unpublished.' }
+      - name: Publish only the Preview manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $worktree = Join-Path $env:RUNNER_TEMP ('tqr-preview-branch-' + [Guid]::NewGuid().ToString('N'))
+          git fetch origin refs/heads/preview:refs/remotes/origin/preview
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the dedicated Preview branch.' }
+          git worktree add --detach $worktree refs/remotes/origin/preview
+          if ($LASTEXITCODE -ne 0) { throw 'Could not open the dedicated Preview branch.' }
+          try {
+            $target = Join-Path $worktree 'updates\preview.json'
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { throw 'Dedicated Preview manifest is missing.' }
+            Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP 'preview.json') -Destination $target -Force
+            git -C $worktree config user.name "github-actions[bot]"
+            git -C $worktree config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C $worktree add updates/preview.json
+            $changed = @(git -C $worktree status --short)
+            if ($changed.Count -ne 1 -or [string]$changed[0] -notmatch 'updates/preview\.json$') { throw 'Preview publication attempted to change an unexpected file.' }
+            $v = [string](Get-Content version.json -Raw | ConvertFrom-Json).version
+            git -C $worktree commit -m "Publish Early-access manifest for $v [skip ci]"
+            if ($LASTEXITCODE -ne 0) { throw 'Preview manifest commit failed.' }
+            git -C $worktree push origin HEAD:refs/heads/preview
+            if ($LASTEXITCODE -ne 0) { throw 'Preview manifest publication failed; no force push is permitted.' }
+          }
+          finally {
+            git worktree remove $worktree --force 2>$null
+          }

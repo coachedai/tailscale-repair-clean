@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible problem without sharing private machine or network data.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Tailscale Quick Repair.
+        Describe the behaviour in words. Do not attach screenshots, raw logs, IP addresses, device names, account details, configuration files, tokens, keys or credentials.
+  - type: input
+    id: version
+    attributes:
+      label: Quick Repair version
+      description: Use the version shown by the app, for example 3.0.0-rc.12.
+      placeholder: 3.0.0-rc.12
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows version
+      description: Choose the closest version. Do not include a device name or account name.
+      options:
+        - Windows 11
+        - Windows 10
+        - Other supported Windows
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened?
+      description: Explain the visible behaviour only. Do not paste logs, IP addresses, device names or account details.
+      placeholder: Describe what you clicked, what the app showed, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Keep the steps generic and remove private names, addresses and identifiers.
+      placeholder: |
+        1. Open Quick Repair
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: vpn
+    attributes:
+      label: Was another VPN active?
+      description: A yes/no/unknown answer is enough unless a fixed vendor label shown by Quick Repair is relevant.
+      options:
+        - "No"
+        - "Yes"
+        - "Unknown"
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have not included screenshots, raw logs, IP addresses, device names, account details, configuration files, tokens, keys or credentials.
+          required: true
+        - label: I understand that a public issue can be read and copied by anyone.
+          required: true

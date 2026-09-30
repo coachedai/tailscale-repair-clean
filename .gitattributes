@@ -1,0 +1,12 @@
+* text=auto
+*.ps1 text eol=lf
+*.cs text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.exe -text
+*.dll -text
+*.ico -text
+*.zip -text

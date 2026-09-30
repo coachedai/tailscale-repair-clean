@@ -1,0 +1,59 @@
+name: Repository history privacy audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  history-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Enforce fresh repository identity
+        shell: bash
+        run: python -B release/check-repository.py --ci
+      - name: Require isolated public Tailscale repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "coachedai/tailscale-repair-clean"
+          test "$GITHUB_REF_NAME" = "main"
+          origin="$(git remote get-url origin)"
+          case "$origin" in
+            https://github.com/coachedai/tailscale-repair-clean|https://github.com/coachedai/tailscale-repair-clean.git) ;;
+            *) echo "Unexpected origin" >&2; exit 2 ;;
+          esac
+
+      - name: Fetch all Tailscale branches and tags read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune --no-recurse-submodules origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            '+refs/tags/*:refs/tags/*' \
+            '+refs/pull/*/head:refs/tqr-audit/pull/*/head' \
+            '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
+
+      - name: Test history audit against synthetic local repositories
+        shell: bash
+        run: python3 release/test-git-history-audit.py
+
+      - name: Scan all reachable Git history without printing matched content
+        shell: bash
+        run: python3 release/audit-git-history.py --result history-privacy-results.json
+
+      - name: Preserve privacy-safe audit result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-privacy-results
+          path: history-privacy-results.json
+          if-no-files-found: error
