@@ -81,8 +81,12 @@ Replace-One "    function Mark-CurrentResultStale {`n        param([string]`$Rea
         param([string]$Reason)
         Reset-ConnectionQuality -Stale
 '@
-# Keep the visible summary distinct from the baseline in Details, not repeated.
-Replace-One '<TextBlock Grid.Row="5" Text="Session"' '<TextBlock Grid.Row="5" Text="Baseline"'
+# Compact Remote details already exposes one recent connection trend row.
+# Require that final packaged anchor without relabelling or expanding the layout.
+$recentAnchor = '<TextBlock Grid.Row="2" Text="Recent"'
+if ([regex]::Matches($text,[regex]::Escape($recentAnchor)).Count -ne 1) {
+    throw 'Quality transform compact trend anchor missing or duplicated.'
+}
 Replace-One '"Session trend: $($DetailConnectionTrend.Text)"' '"Recent latency baseline: $($DetailConnectionTrend.Text)"'
 # Reserve existing layout space; never animate the same label on every repaint.
 Replace-One '        Fade-In $ConnectionInsightText 0.55 170' '        # Keep the reserved insight row steady; no repeated fade on quick checks.'

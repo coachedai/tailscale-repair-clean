@@ -128,7 +128,7 @@ try {
     Check ($AdvancedObservationLabel.Text.Contains('previous')) 'Network changes mark the separate diagnostics observation as previous'
     Check ($script:connectionQuality.Count -eq 0 -and $DetailConnectionTrend.Text -eq 'Waiting for a fresh check') 'Packaged network reset clears comparisons and labels stale evidence'
     Check ($ConnectionInsightText.MinHeight -ge 18) 'Insight retains reserved height instead of collapsing the card'
-    Check ($text.Contains('Text="Baseline"') -and $ConnectionInsightText.ToolTip -match 'not packet jitter') 'Baseline labeling explains the scope of the observations'
+    Check ($text.Contains('Text="Recent"') -and $ConnectionInsightText.ToolTip -match 'not packet jitter') 'Recent trend labeling explains the scope of the observations'
     $window.Close()
     [IO.File]::WriteAllText((Join-Path $EvidenceDirectory 'connection-quality-results.json'),(@{passed=$true;scope='Native .NET observation analysis and final packaged WPF functions; no live network or services';cases=$cases.ToArray()}|ConvertTo-Json -Depth 8))
 } catch {
