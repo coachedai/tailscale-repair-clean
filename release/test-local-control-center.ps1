@@ -26,6 +26,22 @@ function Check {
     if (-not $Condition) { $script:passed = $false }
 }
 
+# Check visibility within the expandable Details container. A child's own
+# Visibility can remain Visible while a containing panel is collapsed.
+function Test-VisibleWithinDetails {
+    param($Element,$Boundary)
+    if ($null -eq $Element -or $null -eq $Boundary) { return $false }
+    $node = $Element
+    for ($depth = 0; $depth -lt 64; $depth++) {
+        if ($null -eq $node) { return $false }
+        if ([object]::ReferenceEquals($node,$Boundary)) { return $true }
+        if ($node -is [System.Windows.UIElement] -and
+            $node.Visibility -ne [System.Windows.Visibility]::Visible) { return $false }
+        $node = [System.Windows.LogicalTreeHelper]::GetParent($node)
+    }
+    return $false
+}
+
 $work = Join-Path $env:RUNNER_TEMP ('tqr-local-control-' + [Guid]::NewGuid().ToString('N'))
 $root = Join-Path $work 'package'
 New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -118,15 +134,56 @@ try {
                 $remoteStatus = $window.FindName('DetailPeerStatus')
                 $remoteRoute = $window.FindName('DetailRoute')
                 $remoteLatency = $window.FindName('DetailLatency')
-                Check ($remoteName -and $remoteIp -and $remoteTrend -and
-                    $remoteName.Visibility -eq [System.Windows.Visibility]::Visible -and
-                    $remoteIp.Visibility -eq [System.Windows.Visibility]::Visible -and
-                    $remoteTrend.Visibility -eq [System.Windows.Visibility]::Visible) 'Remote details keeps only deeper visible context'
-                Check ($remoteStatus -and $remoteRoute -and $remoteLatency -and
-                    $remoteStatus.Visibility -eq [System.Windows.Visibility]::Collapsed -and
-                    $remoteRoute.Visibility -eq [System.Windows.Visibility]::Collapsed -and
-                    $remoteLatency.Visibility -eq [System.Windows.Visibility]::Collapsed) 'Remote dashboard duplicates stay hidden while copy bindings remain available'
-                Check ($text.Contains('Text="Recent"')) 'Remote details labels the connection trend compactly'
+                $details = $window.FindName('DetailsPanel')
+                Check ($details -and
+                    (Test-VisibleWithinDetails $remoteName $details) -and
+                    (Test-VisibleWithinDetails $remoteIp $details) -and
+                    (Test-VisibleWithinDetails $remoteTrend $details)) 'Remote details keeps deeper context outside hidden ancestors'
+                $duplicates = $window.FindName('DetailDuplicateRemoteSummary')
+                Check ($remoteStatus -and $remoteRoute -and $remoteLatency -and $duplicates -and
+                    $duplicates.Visibility -eq [System.Windows.Visibility]::Collapsed -and
+                    [object]::ReferenceEquals([System.Windows.LogicalTreeHelper]::GetParent($remoteStatus),$duplicates) -and
+                    [object]::ReferenceEquals([System.Windows.LogicalTreeHelper]::GetParent($remoteRoute),$duplicates) -and
+                    [object]::ReferenceEquals([System.Windows.LogicalTreeHelper]::GetParent($remoteLatency),$duplicates) -and
+                    -not (Test-VisibleWithinDetails $remoteStatus $details) -and
+                    -not (Test-VisibleWithinDetails $remoteRoute $details) -and
+                    -not (Test-VisibleWithinDetails $remoteLatency $details)) 'Remote dashboard duplicates stay hidden while copy bindings remain available'
+                foreach ($name in @('DetailPeerName','DetailPeerIp','DetailConnectionTrend',
+                    'DetailPeerStatus','DetailRoute','DetailLatency')) {
+                    $namePattern = [regex]::Escape(('x:Name="' + $name + '"'))
+                    Check ([regex]::Matches($xamlMatch.Groups['xaml'].Value,$namePattern).Count -eq 1) ('One remote detail binding: ' + $name)
+                }
+                $trendGrid = if ($remoteTrend) { [System.Windows.LogicalTreeHelper]::GetParent($remoteTrend) } else { $null }
+                $recentLabel = @()
+                if ($trendGrid -is [System.Windows.Controls.Grid]) {
+                    $recentLabel = @($trendGrid.Children | Where-Object {
+                        $_ -is [System.Windows.Controls.TextBlock] -and
+                        [System.Windows.Controls.Grid]::GetRow($_) -eq [System.Windows.Controls.Grid]::GetRow($remoteTrend) -and
+                        [System.Windows.Controls.Grid]::GetColumn($_) -eq 0 -and $_.Text -ceq 'Recent'
+                    })
+                    Check ($trendGrid.RowDefinitions.Count -eq 3) 'Remote details keeps three compact context rows'
+                } else { Check $false 'Remote context grid is available' }
+                Check ($recentLabel.Count -eq 1) 'Recent label belongs to the visible connection trend row'
+
+                # Synthetic native controls prove the hierarchy check detects
+                # hidden parents, rather than trusting a child's local value.
+                $visibilityRoot = New-Object System.Windows.Controls.Grid
+                $visibilityParent = New-Object System.Windows.Controls.StackPanel
+                $visibilityProbe = New-Object System.Windows.Controls.TextBlock
+                [void]$visibilityRoot.Children.Add($visibilityParent)
+                [void]$visibilityParent.Children.Add($visibilityProbe)
+                Check (Test-VisibleWithinDetails $visibilityProbe $visibilityRoot) 'Visibility check accepts an attached visible hierarchy'
+                foreach ($state in @([System.Windows.Visibility]::Collapsed,[System.Windows.Visibility]::Hidden)) {
+                    $visibilityParent.Visibility = $state
+                    Check ($visibilityProbe.Visibility -eq [System.Windows.Visibility]::Visible -and
+                        -not (Test-VisibleWithinDetails $visibilityProbe $visibilityRoot)) 'Visibility check rejects a hidden ancestor despite a visible child'
+                }
+                $visibilityParent.Visibility = [System.Windows.Visibility]::Visible
+                $visibilityProbe.Visibility = [System.Windows.Visibility]::Collapsed
+                Check (-not (Test-VisibleWithinDetails $visibilityProbe $visibilityRoot)) 'Visibility check rejects a directly collapsed control'
+                [void]$visibilityParent.Children.Remove($visibilityProbe)
+                $visibilityProbe.Visibility = [System.Windows.Visibility]::Visible
+                Check (-not (Test-VisibleWithinDetails $visibilityProbe $visibilityRoot)) 'Visibility check rejects a detached control'
             }
         }
         finally {
