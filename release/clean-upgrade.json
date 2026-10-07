@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "repository": "coachedai/tailscale-repair-clean",
+  "repositoryId": 1398720044,
+  "source": "bd951876d4d00ea8098368a73c5470dc741e1a0f",
+  "tree": "d617ad9b644495a81173fe882938f0171089cb41",
+  "runId": 37667190642,
+  "version": "3.0.0-rc.13",
+  "versionCode": 30001013,
+  "artifacts": {
+    "packages": {
+      "id": 11503419165,
+      "name": "candidate-validation-packages",
+      "size": 646021,
+      "sha256": "419d83e001221be7f2247fe8db4da8c86d1816e0ae42bc0a1b7a11a728bd6981"
+    },
+    "evidence": {
+      "id": 11503259378,
+      "name": "startup-tests",
+      "size": 41992,
+      "sha256": "6bd6d64537b406e0cbbf810aa5a22b1dcbac92f478d9af122239a6281212310a"
+    }
+  },
+  "files": {
+    "TailscaleQuickRepair-3.0.0-rc.13.zip": {
+      "size": 149393,
+      "sha256": "2c954ba535e0ddebf7595377528608bd1c00f0d44a5f2db0c5219b487395c7a2"
+    },
+    "TailscaleQuickRepair-SetupPackage-3.0.0-rc.13.zip": {
+      "size": 206533,
+      "sha256": "887b5d18cb57cc45f3903cd58e31db678c247dd98c9876eb8b79620739569355"
+    },
+    "TailscaleQuickRepair-Standalone-3.0.0-rc.13.exe": {
+      "size": 291840,
+      "sha256": "60abfc13be8e6c619170ed234914ec7f0a5412a7c1eff735aaae0d110816a13b"
+    }
+  }
+}
