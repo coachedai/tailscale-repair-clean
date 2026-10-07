@@ -119,8 +119,10 @@ def archive(data, windows=False):
             entries = handle.infolist()
             require(0 < len(entries) <= 100, 'archive_count')
             for entry in entries:
-                require(entry.orig_filename == entry.filename, 'archive_path')
-                name = canonical(entry.filename, windows)
+                # Validate the stored name before accepting zipfile's host-specific
+                # separator normalization. NUL truncation and path aliases still fail.
+                name = canonical(entry.orig_filename, windows)
+                require(canonical(entry.filename, windows) == name, 'archive_path')
                 mode = stat.S_IFMT(entry.external_attr >> 16)
                 require(mode in (0, stat.S_IFREG) and not entry.is_dir(), 'archive_file_type')
                 require(not (entry.flag_bits & 1) and entry.compress_type in
