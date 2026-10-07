@@ -7,7 +7,9 @@ function Invoke-PinnedProcessFileRecovery {
        $env:RUNNER_OS -cne 'Windows' -or $env:RUNNER_ARCH -cne 'X64' -or
        $env:TQR_NATIVE_LAB_RUN -cne $env:GITHUB_RUN_ID -or [string]::IsNullOrWhiteSpace($env:GITHUB_RUN_ID) -or
        $PSVersionTable.PSEdition -cne 'Desktop' -or $PSVersionTable.PSVersion.Major -ne 5){throw 'Owned recovery preconditions missing.'}
-    & python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory
+    & (Join-Path $PSScriptRoot 'test-process-result.ps1')
+    # Keep verifier status text out of the integer result; its exit code remains mandatory.
+    $null = & python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory
     if($LASTEXITCODE -ne 0){throw 'Process recovery input verification failed.'}
     if($newPlan.Count -ne 11 -or $oldPlan.Count -ne 11){throw 'Fixed file plans required.'}
     $childScript=Join-Path $PSScriptRoot 'test-setup-transaction-child.ps1'
@@ -81,5 +83,5 @@ function Invoke-PinnedProcessFileRecovery {
         }
     }
     Check ($points -eq 11) 'All candidate file boundaries pass fresh-process recovery'
-    return $points
+    return [int]$points
 }

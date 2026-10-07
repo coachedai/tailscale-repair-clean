@@ -30,6 +30,8 @@ def validate(main, driver, child):
           '$apply.MainModule.FileName -ieq $hostPath', '$apply.Id -ne $PID',
           '$ready.WaitOne(20000)', '$restore.WaitForExit(20000)', '$restore.ExitCode -eq 0',
           '$restore.StartTime.ToUniversalTime().Ticks -ne $applyStarted')
+    needs(driver, "$null = & python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory",
+          "& (Join-Path $PSScriptRoot 'test-process-result.ps1')", 'return [int]$points')
     needs(driver, "'prepared'", '@($record.entries).Count -eq 11',
           '(Digest $journal) -ceq $journalHash', 'Assert-Files $oldPlan',
           '(Digest $config) -ceq $configHash', "@('.setup.new','.setup.recover')",
@@ -82,6 +84,9 @@ class ProcessRecoveryContracts(unittest.TestCase):
             (1, 'for($point=1;$point -le 11;$point++)'),
             (1, '$apply.StartTime.ToUniversalTime().Ticks -eq $applyStarted'),
             (1, '$apply.MainModule.FileName -ieq $hostPath'),
+            (1, 'return [int]$points'),
+            (1, "& (Join-Path $PSScriptRoot 'test-process-result.ps1')"),
+            (1, '$null = & python'),
             (1, '$apply.Kill()'),
             (1, '$apply.WaitForExit(5000)'),
             (1, '(Digest $journal) -ceq $journalHash'),
@@ -101,6 +106,18 @@ class ProcessRecoveryContracts(unittest.TestCase):
                 changed[index] = changed[index].replace(term, 'REMOVED')
                 with self.assertRaises((AssertionError, ValueError)):
                     validate(*changed)
+
+    def test_native_result_probe_is_isolated(self):
+        probe = (ROOT / 'test-process-result.ps1').read_text('utf-8-sig')
+        for term in ('Parser]::ParseFile', 'AssignmentStatementAst', '$statement.Left.Extent.Text',
+                     '$guard.Extent.Text.Contains', 'function python',
+                     '[Management.Automation.CommandTypes]::Function',
+                     '$result -isnot [int]', '$script:fixtureCalls -ne 3', '@(1,90)',
+                     'if(-not $refused)', '$global:LASTEXITCODE=$oldExit'):
+            self.assertIn(term, probe)
+        for term in ('Process.Start', '.Kill(', 'Start-Process', 'Add-Type -Path',
+                     'Remove-Item', 'Copy-Item', 'WriteAllBytes', 'WriteAllText'):
+            self.assertNotIn(term, probe)
 
     def test_manual_cleanup_is_rejected(self):
         for index in (1, 2):
