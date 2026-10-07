@@ -70,9 +70,20 @@ class BuildProfileTests(unittest.TestCase):
     def test_candidate_version_is_monotonic_and_unpublished(self):
         version = json.loads(text('version.json'))
         publish = json.loads(text('release/publish.json'))
-        self.assertEqual(version['version'], '3.0.0-rc.12')
-        self.assertEqual(version['versionCode'], 30001012)
+        baseline = json.loads(text('release/clean-baseline.json'))
+        self.assertEqual(version['version'], '3.0.0-rc.13')
+        self.assertIs(type(version['versionCode']), int)
+        self.assertEqual(version['versionCode'], 30001013)
+        self.assertIs(type(publish['versionCode']), int)
         self.assertEqual((version['version'], version['versionCode']), (publish['version'], publish['versionCode']))
+        self.assertEqual((baseline['version'], baseline['versionCode']), ('3.0.0-rc.12', 30001012))
+        self.assertGreater(version['versionCode'], baseline['versionCode'])
+        self.assertEqual(version['channel'], 'preview')
+        self.assertEqual(publish['channel'], 'preview')
+        self.assertIs(publish['publish'], False)
+        self.assertIs(type(version['updateSchema']), int)
+        self.assertIs(type(version['configSchema']), int)
+        self.assertEqual((version['updateSchema'], version['configSchema']), (1, 2))
         for name in ('updates/latest.json', 'updates/preview.json'):
             self.assertIs(json.loads(text(name))['published'], False)
 
