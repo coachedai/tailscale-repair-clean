@@ -35,6 +35,8 @@ $report=Join-Path $EvidenceDirectory 'clean-version-upgrade-results.json'
 if(Test-Path -LiteralPath $report){throw 'Existing evidence must not be overwritten.'}
 & python -B (Join-Path $PSScriptRoot 'test-controlled-rollback.py')
 if($LASTEXITCODE -ne 0){throw 'Controlled rollback wiring checks failed.'}
+& python -B (Join-Path $PSScriptRoot 'test-process-recovery-boundaries.py')
+if($LASTEXITCODE -ne 0){throw 'Process recovery wiring checks failed.'}
 # The verifier also requires exact repository/checkout identity and release locks.
 & python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory
 if($LASTEXITCODE -ne 0){throw 'Pinned upgrade inputs failed verification.'}
@@ -81,6 +83,7 @@ $flags=[Reflection.BindingFlags]'Public,NonPublic,Static,Instance'
 $passed=$false;$owned=$false;$cleanupPassed=$false;$leaseType=$null
 $upgradeExecuted=$false;$downgradeRefused=$false;$leaseRefused=$false
 $controlledRollbackTested=$false;$rollbackPointsPassed=0
+$processFileRecoveryTested=$false;$processRecoveryPoints=0
 $stage='initial';$failure='';$failureReason=''
 function Check([bool]$Value,[string]$Name){
     $cases.Add([pscustomobject]@{name=$Name;passed=$Value})
@@ -232,6 +235,12 @@ try{
     $controlledRollbackTested=$true
     [void](Native $newType 'ReleaseOperationLock');$leaseType=$null
 
+    $stage='process_file_recovery'
+    . (Join-Path $PSScriptRoot 'test-process-file-recovery.ps1')
+    $processRecoveryPoints=Invoke-PinnedProcessFileRecovery
+    Check ($processRecoveryPoints -eq 11) 'All forced-termination file recovery points completed'
+    $processFileRecoveryTested=$true
+
     $stage='held_operation_refusal'
     Check ([bool](Native $oldType 'TryAcquireOperationLock' @('maintenance'))) 'Fixture owns a real competing operation lease'
     $leaseType=$oldType
@@ -342,9 +351,11 @@ try{
         cases=@($cases.ToArray());cleanupPassed=$cleanupPassed;failureType=$failure;failureReason=$failureReason;stage=$stage
         versionUpgradeExecuted=$upgradeExecuted;downgradeRefused=$downgradeRefused;competingOperationRefused=$leaseRefused
         controlledFileRollbackTested=$controlledRollbackTested;controlledRollbackPoints=$rollbackPointsPassed
+        processFileRecoveryTested=$processFileRecoveryTested;processRecoveryPoints=$processRecoveryPoints
         desktopElevationTested=$false;publicFeedVerified=$false;interruptedUpgradeTested=$false
-        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. Process termination, power loss, secure-desktop consent and public delivery are not tested.'
+        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. File-transaction host termination and fresh-process recovery are tested at all replacement points. Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested.'
     }|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $report -Encoding UTF8
 }
-if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
+if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11 -or
+   -not $processFileRecoveryTested -or $processRecoveryPoints -ne 11){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
 Write-Host 'Pinned native version upgrade and downgrade refusal passed; desktop consent and delivery remain separate.'
