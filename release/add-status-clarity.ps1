@@ -304,16 +304,22 @@ $detailsReplacement=@'
                                             <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto" MinHeight="27"/>
+                                            <RowDefinition Height="Auto" MinHeight="27"/>
+                                            <RowDefinition Height="Auto" MinHeight="27"/>
                                         </Grid.RowDefinitions>
-                                        <TextBlock Grid.Row="0" Text="Baseline" Foreground="{StaticResource Faint}"/>
-                                        <TextBlock x:Name="DetailConnectionTrend" Grid.Row="0" Grid.Column="1"
+                                        <TextBlock Grid.Row="0" Text="Device" Foreground="{StaticResource Faint}"/>
+                                        <TextBlock Grid.Row="1" Text="Peer IP" Foreground="{StaticResource Faint}"/>
+                                        <TextBlock Grid.Row="2" Text="Recent" Foreground="{StaticResource Faint}"/>
+                                        <TextBlock x:Name="DetailPeerName" Grid.Row="0" Grid.Column="1"
+                                                   Text="—" Foreground="{StaticResource Value}" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="DetailPeerIp" Grid.Row="1" Grid.Column="1"
+                                                   Text="—" Foreground="{StaticResource Value}" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="DetailConnectionTrend" Grid.Row="2" Grid.Column="1"
                                                    Text="—" Foreground="{StaticResource Value}"
                                                    TextWrapping="Wrap"/>
                                     </Grid>
                                     <StackPanel x:Name="DetailDuplicateRemoteSummary" Visibility="Collapsed">
-                                        <TextBlock x:Name="DetailPeerName" Text="—"/>
-                                        <TextBlock x:Name="DetailPeerIp" Text="—"/>
                                         <TextBlock x:Name="DetailPeerStatus" Text="—"/>
                                         <TextBlock x:Name="DetailRoute" Text="—"/>
                                         <TextBlock x:Name="DetailLatency" Text="—"/>
