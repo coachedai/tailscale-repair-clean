@@ -336,5 +336,112 @@ class BaselineTests(unittest.TestCase):
             self.assertEqual(list(target.iterdir()), [])
 
 
+class ArchiveHostTests(unittest.TestCase):
+    class ZipOS:
+        # Change zipfile's separator rules only, not the host filesystem.
+        def __init__(self, windows):
+            self.sep = '\\' if windows else '/'
+            self.altsep = '/' if windows else None
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+    @staticmethod
+    def raw_archive(items):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, 'w', zipfile.ZIP_STORED) as handle:
+            for name, data in items:
+                entry = zipfile.ZipInfo(name)
+                # Preserve the stored spelling, including deliberately invalid
+                # synthetic names, independently of the writer's host rules.
+                entry.filename = entry.orig_filename = name
+                handle.writestr(entry, data)
+        return stream.getvalue()
+
+    def read(self, data, host_windows, package_mode=True):
+        with mock.patch.object(zipfile, 'os', self.ZipOS(host_windows)):
+            return BASELINE.archive(data, windows=package_mode)
+
+    def test_raw_backslash_package_is_host_independent(self):
+        data = self.raw_archive([(r'app\fixture.txt', b'synthetic')])
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                self.assertEqual(self.read(data, windows), {'app/fixture.txt': b'synthetic'})
+
+    def test_forward_slash_package_is_host_independent(self):
+        data = self.raw_archive([('app/fixture.txt', b'synthetic')])
+        for windows in (False, True):
+            self.assertEqual(self.read(data, windows), {'app/fixture.txt': b'synthetic'})
+
+    def test_exercises_real_zipinfo_windows_normalization(self):
+        data = self.raw_archive([(r'app\fixture.txt', b'synthetic')])
+        with mock.patch.object(zipfile, 'os', self.ZipOS(True)):
+            with zipfile.ZipFile(io.BytesIO(data)) as handle:
+                entry = handle.infolist()[0]
+                self.assertEqual(entry.orig_filename, r'app\fixture.txt')
+                self.assertEqual(entry.filename, 'app/fixture.txt')
+                self.assertNotEqual(entry.orig_filename, entry.filename)
+
+    def test_non_package_mode_still_refuses_raw_backslash(self):
+        data = self.raw_archive([(r'app\fixture.txt', b'synthetic')])
+        for windows in (False, True):
+            with self.assertRaises(BASELINE.Refused):
+                self.read(data, windows, package_mode=False)
+
+    def test_nul_is_not_hidden_by_parser_normalization(self):
+        for name in ('app/file\x00suffix', 'app/file\x00', 'app\\file\x00suffix'):
+            data = self.raw_archive([(name, b'synthetic')])
+            for windows in (False, True):
+                with self.subTest(windows=windows), self.assertRaises(BASELINE.Refused):
+                    self.read(data, windows)
+
+    def test_unsafe_raw_paths_are_never_sanitized_into_acceptance(self):
+        for name in (r'..\escape', r'app\..\escape', r'\rooted', r'\\host\file',
+                     r'C:\file', r'C:file', r'app\\file', r'app\.\file',
+                     r'app\NUL.txt', r'app\COM1', r'app\file.', r'app\file ',
+                     'app/../file', 'app//file', 'app/fi\x01le'):
+            data = self.raw_archive([(name, b'synthetic')])
+            for windows in (False, True):
+                with self.subTest(windows=windows), self.assertRaises(BASELINE.Refused):
+                    self.read(data, windows)
+
+    def test_case_and_separator_collisions_remain_blocked(self):
+        for first, second in [('app/file', r'app\file'), (r'app\File', 'APP/file')]:
+            data = self.raw_archive([(first, b'a'), (second, b'b')])
+            for windows in (False, True):
+                with self.assertRaisesRegex(BASELINE.Refused, 'archive_duplicate'):
+                    self.read(data, windows)
+
+    def test_unrelated_parser_name_change_is_refused(self):
+        entry = mock.Mock(orig_filename='app/good', filename='app/evil')
+        handle = mock.MagicMock()
+        handle.infolist.return_value = [entry]
+        with mock.patch.object(zipfile, 'ZipFile') as factory:
+            factory.return_value.__enter__.return_value = handle
+            with self.assertRaisesRegex(BASELINE.Refused, 'archive_path'):
+                BASELINE.archive(b'synthetic', windows=True)
+            handle.open.assert_not_called()
+
+    def test_local_header_name_mismatch_remains_blocked(self):
+        data = self.raw_archive([('app/file', b'synthetic')])
+        self.assertEqual(data.count(b'app/file'), 2)
+        changed = data.replace(b'app/file', b'app/fake', 1)
+        for windows in (False, True):
+            with self.assertRaises(BASELINE.Refused):
+                self.read(changed, windows)
+
+    def verify_synthetic_package(self, setup):
+        files = BASELINE.archive(package(setup), windows=True)
+        data = self.raw_archive([(name.replace('/', '\\'), value) for name, value in files.items()])
+        for windows in (False, True):
+            with mock.patch.object(zipfile, 'os', self.ZipOS(windows)):
+                self.assertEqual(BASELINE.verify_package(data, PINS, setup), b'Synthetic fixture.\n')
+
+    def test_synthetic_setup_manifest_on_both_hosts(self):
+        self.verify_synthetic_package(True)
+
+    def test_synthetic_update_manifest_on_both_hosts(self):
+        self.verify_synthetic_package(False)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

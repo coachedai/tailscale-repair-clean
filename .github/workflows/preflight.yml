@@ -41,6 +41,8 @@ jobs:
         run: python3 -B release/test-clean-baseline.py
       - name: Check staged baseline and native Setup boundaries
         run: python3 -B release/test-clean-setup-boundaries.py
+      - name: Check pinned version-upgrade inputs and boundaries
+        run: python3 -B release/test-clean-upgrade.py
       - name: Check released migration input boundaries
         run: python3 -B release/test-released-migration-inputs.py
       - name: Check Setup entry test boundaries
@@ -427,5 +429,108 @@ jobs:
           path: |
             ${{ runner.temp }}/tqr-clean-entry-evidence/source-syntax-results.json
             ${{ runner.temp }}/tqr-clean-entry-evidence/clean-setup-entry-results.json
+          if-no-files-found: ignore
+          retention-days: 30
+  clean-upgrade-inputs:
+    if: github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Require unchanged isolated source
+        run: python3 -B release/check-repository.py --ci
+      - name: Stage two exact accepted versions without execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B release/prepare-clean-upgrade.py stage
+      - name: Confirm source and release locks remain unchanged
+        run: |
+          python3 -B release/check-repository.py --ci
+          git diff --exit-code
+      - name: Preserve only fixed upgrade inputs and typed receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clean-version-upgrade-inputs
+          path: |
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-3.0.0-rc.12.zip
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-3.0.0-rc.12.zip.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-3.0.0-rc.13.zip
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-3.0.0-rc.13.zip.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-SetupPackage-3.0.0-rc.13.zip
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-SetupPackage-3.0.0-rc.13.zip.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-Standalone-3.0.0-rc.13.exe
+            ${{ runner.temp }}/tqr-clean-upgrade/TailscaleQuickRepair-Standalone-3.0.0-rc.13.exe.sha256
+            ${{ runner.temp }}/tqr-clean-upgrade/upgrade-input-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+  clean-version-upgrade:
+    if: github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: [preflight, clean-upgrade-inputs, clean-setup-entry]
+    runs-on: windows-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Require exact source and native syntax
+        run: |
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Source boundary failed.'}
+          .\release\test-source-syntax.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-version-evidence"
+      - name: Receive fixed versions from this run only
+        uses: actions/download-artifact@v4
+        with:
+          name: clean-version-upgrade-inputs
+          path: ${{ runner.temp }}/tqr-version-inputs
+      - name: Exercise actual version transition and downgrade refusal
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: .\release\test-clean-version-upgrade.ps1 -InputDirectory "$env:RUNNER_TEMP\tqr-version-inputs" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-version-evidence"
+      - name: Require genuine scoped version-transition evidence
+        run: |
+          $r=Get-Content "$env:RUNNER_TEMP\tqr-version-evidence\clean-version-upgrade-results.json" -Raw|ConvertFrom-Json
+          $old=Get-Content release/clean-baseline.json -Raw|ConvertFrom-Json
+          $new=Get-Content release/clean-upgrade.json -Raw|ConvertFrom-Json
+          if($r.passed -isnot [bool] -or -not $r.passed -or $r.testSource -cne $env:GITHUB_SHA -or $r.predecessorSource -cne $old.source -or $r.candidateSource -cne $new.source){throw 'Version evidence identity failed.'}
+          if($r.predecessorVersion -cne $old.version -or $r.candidateVersion -cne $new.version -or $new.versionCode -le $old.versionCode){throw 'Version transition is not the pinned upgrade.'}
+          foreach($name in @('cleanupPassed','versionUpgradeExecuted','downgradeRefused','competingOperationRefused')){
+            if($r.$name -isnot [bool] -or -not $r.$name){throw 'Required native version evidence is incomplete.'}
+          }
+          foreach($name in @('desktopElevationTested','publicFeedVerified','interruptedUpgradeTested')){
+            if($r.$name -isnot [bool] -or $r.$name){throw 'Version evidence exceeded tested scope.'}
+          }
+          if(@($r.cases).Count -lt 1 -or @($r.cases|Where-Object {$_.passed -isnot [bool] -or -not $_.passed}).Count){throw 'Native version assertions failed.'}
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Final source check failed.'}
+          git diff --exit-code
+          if($LASTEXITCODE -ne 0){throw 'Native upgrade changed tracked source.'}
+      - name: Preserve typed version-transition evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clean-version-upgrade-evidence
+          path: |
+            ${{ runner.temp }}/tqr-version-evidence/source-syntax-results.json
+            ${{ runner.temp }}/tqr-version-evidence/clean-version-upgrade-results.json
           if-no-files-found: ignore
           retention-days: 30
