@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "repository": "coachedai/tailscale-repair-clean",
+  "repositoryId": 1398720044,
+  "source": "d636001ca18a6c037d69b6174720f49bb7e250a4",
+  "tree": "1724c93d65e2c4d94a3cc635e294f79245843365",
+  "runId": 37651113250,
+  "version": "3.0.0-rc.12",
+  "versionCode": 30001012,
+  "artifacts": {
+    "packages": {
+      "id": 11497850489,
+      "name": "candidate-validation-packages",
+      "size": 646016,
+      "sha256": "eb7ac95a289ad9806fcbd0235ee813599ac9e9eeb6bb1af10fbaed60d9c3f6ff"
+    },
+    "evidence": {
+      "id": 11496961874,
+      "name": "startup-tests",
+      "size": 41995,
+      "sha256": "7efaa4073800761a733d70576e1748ae573167a4ad169e01016a21b9508313da"
+    }
+  },
+  "files": {
+    "TailscaleQuickRepair-3.0.0-rc.12.zip": {
+      "size": 149394,
+      "sha256": "6341ead4ae52ac15e4aaf457f12141988c2c1f25f53496368d267df8912b56cc"
+    },
+    "TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip": {
+      "size": 206527,
+      "sha256": "2b64bbb0eec52d20c8d485ea37924d49c93b955793d185bec2bf450183ade1dd"
+    },
+    "TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe": {
+      "size": 291840,
+      "sha256": "288086a1663d09120c9f11c2b4b0dd63a6b95501e6faac0ab999794cb91ea065"
+    }
+  }
+}

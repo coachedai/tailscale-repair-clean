@@ -37,6 +37,8 @@ jobs:
         run: python3 -B release/test-development-guardrails.py
       - name: Check build profiles and standalone packaging boundaries
         run: python3 -B release/test-build-profile.py
+      - name: Check clean baseline with synthetic artifacts
+        run: python3 -B release/test-clean-baseline.py
       - name: Check released migration input boundaries
         run: python3 -B release/test-released-migration-inputs.py
       - name: Check Setup entry test boundaries
@@ -58,6 +60,44 @@ jobs:
             '+refs/pull/*/merge:refs/tqr-audit/pull/*/merge'
       - name: Require a clean history
         run: python3 -B release/audit-git-history.py --result "$RUNNER_TEMP/history-privacy-results.json"
+  clean-baseline:
+    if: github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Require exact source before baseline access
+        run: python3 -B release/check-repository.py --ci
+      - name: Verify fixed clean-repository baseline without executing installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B release/prepare-clean-baseline.py
+      - name: Confirm source remains unchanged
+        run: |
+          python3 -B release/check-repository.py --ci
+          git diff --exit-code
+      - name: Preserve only verified baseline files and typed receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clean-upgrade-baseline
+          path: |
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-3.0.0-rc.12.zip
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-3.0.0-rc.12.zip.sha256
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-SetupPackage-3.0.0-rc.12.zip.sha256
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe
+            ${{ runner.temp }}/tqr-clean-baseline/TailscaleQuickRepair-Standalone-3.0.0-rc.12.exe.sha256
+            ${{ runner.temp }}/tqr-clean-baseline/baseline-receipt.json
+          if-no-files-found: error
+          retention-days: 30
   startup-windows:
     if: github.repository == 'coachedai/tailscale-repair-clean' && (github.ref_name == 'main' || github.ref_name == 'work/public')
     needs: preflight
