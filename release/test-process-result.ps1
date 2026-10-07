@@ -29,11 +29,22 @@ if($guard -isnot [Management.Automation.Language.IfStatementAst] -or
    -not $guard.Extent.Text.Contains('$LASTEXITCODE -ne 0')){
     throw 'Verifier failure must retain its exit-code guard.'
 }
-$probe=[ScriptBlock]::Create($statement.Extent.Text+"`n"+$guard.Extent.Text+"`nreturn 11")
+# Parse only the two extracted statements with their original file identity.
+# This keeps script-relative resolution without invoking the full driver.
+$probeText=$statement.Extent.Text+"`n"+$guard.Extent.Text+"`nreturn 11"
+$probeTokens=$null;$probeErrors=$null
+$probeAst=[Management.Automation.Language.Parser]::ParseInput($probeText,$source,[ref]$probeTokens,[ref]$probeErrors)
+if(@($probeErrors).Count){throw 'Isolated verifier syntax failed.'}
+$probe=$probeAst.GetScriptBlock()
+if($probe.File -cne $source){throw 'Isolated verifier lost its source context.'}
 $InputDirectory='synthetic-inputs'
 $script:fixtureExit=0
 $script:fixtureCalls=0
+$script:fixtureVerifier=Join-Path $PSScriptRoot 'prepare-clean-upgrade.py'
 function python {
+    if(@($args).Count -ne 4 -or $args[0] -cne '-B' -or
+       $args[1] -cne $script:fixtureVerifier -or $args[2] -cne 'verify' -or
+       $args[3] -cne 'synthetic-inputs'){throw 'Synthetic verifier arguments changed.'}
     $script:fixtureCalls++
     $global:LASTEXITCODE=$script:fixtureExit
     Write-Output 'Synthetic verification status.'

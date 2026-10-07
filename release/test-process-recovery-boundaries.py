@@ -113,10 +113,13 @@ class ProcessRecoveryContracts(unittest.TestCase):
                      '$guard.Extent.Text.Contains', 'function python',
                      '[Management.Automation.CommandTypes]::Function',
                      '$result -isnot [int]', '$script:fixtureCalls -ne 3', '@(1,90)',
-                     'if(-not $refused)', '$global:LASTEXITCODE=$oldExit'):
+                     'if(-not $refused)', '$global:LASTEXITCODE=$oldExit',
+                     'Parser]::ParseInput($probeText,$source,', '$probeAst.GetScriptBlock()',
+                     '$probe.File -cne $source', '$args[1] -cne $script:fixtureVerifier'):
             self.assertIn(term, probe)
         for term in ('Process.Start', '.Kill(', 'Start-Process', 'Add-Type -Path',
-                     'Remove-Item', 'Copy-Item', 'WriteAllBytes', 'WriteAllText'):
+                     'Remove-Item', 'Copy-Item', 'WriteAllBytes', 'WriteAllText',
+                     '[ScriptBlock]::Create', '$ast.GetScriptBlock()'):
             self.assertNotIn(term, probe)
 
     def test_manual_cleanup_is_rejected(self):
