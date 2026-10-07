@@ -28,7 +28,7 @@ def pin(version, code, source, digest):
 def fixture():
     old = pin('3.0.0-rc.12', 30001012, 'a', 'd')
     new = pin('3.0.0-rc.13', 30001013, 'b', 'e')
-    report = dict(v.identities(old, new, SOURCE), schema=1, failureType='', failureReason='',
+    report = dict(v.identities(old, new, SOURCE), schema=2, standaloneRecoveryCheckpoint=6, failureType='', failureReason='',
                   stage='downgrade_refusal', scope=v.SCOPE,
                   cases=[{'name': name, 'passed': True} for name in v.expected_cases()])
     report.update({name: True for name in v.TRUE_FIELDS})
@@ -45,7 +45,7 @@ class NativeEvidenceTests(unittest.TestCase):
         return v.validate(self.report if report is None else report, self.old, self.new, SOURCE)
 
     def test_complete_synthetic_report(self):
-        self.assertEqual(self.accepted(), 252)
+        self.assertEqual(self.accepted(), 263)
         names = v.expected_cases()
         self.assertEqual(len(set(names)), len(names))
         self.assertEqual(sum(name.startswith('Rollback point ') for name in names), 66)
@@ -89,24 +89,24 @@ class NativeEvidenceTests(unittest.TestCase):
                     with self.assertRaises(v.Refused): self.accepted(changed)
 
     def test_every_assertion_must_succeed(self):
-        for index in range(252):
+        for index in range(263):
             with self.subTest(index=index):
                 changed = copy.deepcopy(self.report); changed['cases'][index]['passed'] = False
                 with self.assertRaises(v.Refused): self.accepted(changed)
 
     def test_each_missing_assertion_is_refused(self):
-        for index in range(252):
+        for index in range(263):
             with self.subTest(index=index):
                 changed = copy.deepcopy(self.report); del changed['cases'][index]
                 with self.assertRaises(v.Refused): self.accepted(changed)
 
     def test_fake_complete_count_does_not_replace_evidence(self):
-        for length in (0, 1, 107, 223, 251):
+        for length in (0, 1, 107, 223, 252, 262):
             with self.subTest(length=length):
                 changed = copy.deepcopy(self.report); changed['cases'] = changed['cases'][:length]
                 with self.assertRaises(v.Refused): self.accepted(changed)
         changed = copy.deepcopy(self.report)
-        changed['cases'] = [copy.deepcopy(changed['cases'][0]) for _ in range(252)]
+        changed['cases'] = [copy.deepcopy(changed['cases'][0]) for _ in range(263)]
         with self.assertRaises(v.Refused): self.accepted(changed)
 
     def test_case_order_and_duplicate_name(self):
@@ -137,7 +137,7 @@ class NativeEvidenceTests(unittest.TestCase):
                     with self.assertRaises(v.Refused): self.accepted(changed)
 
     def test_terminal_state_failure_fields_and_scope(self):
-        for key, values in (('schema', (True, '1', 2, 1.0)),
+        for key, values in (('schema', (True, '2', 1, 2.0)),
                             ('stage', ('process_file_recovery', 'actual_version_upgrade', '')),
                             ('failureType', ('SyntheticException', None)),
                             ('failureReason', ('synthetic_failure', False)),
@@ -166,8 +166,8 @@ class NativeEvidenceTests(unittest.TestCase):
                     b'\xff', b'', b'bad', b'[] trailing'):
             with self.assertRaises(v.Refused): v.decode(raw)
         raw = json.dumps(self.report).encode('utf-8')
-        self.assertEqual(self.accepted(v.decode(raw)), 252)
-        self.assertEqual(self.accepted(v.decode(b'\xef\xbb\xbf' + raw)), 252)
+        self.assertEqual(self.accepted(v.decode(raw)), 263)
+        self.assertEqual(self.accepted(v.decode(b'\xef\xbb\xbf' + raw)), 263)
 
     def test_decoder_is_bounded(self):
         for raw in (b'x' * (v.MAX_REPORT + 1), b'[' * 2000 + b']' * 2000):
@@ -245,6 +245,116 @@ class NativeEvidenceTests(unittest.TestCase):
         self.assertEqual(result.stdout, '')
         self.assertEqual(result.stderr.strip(), 'Native evidence refused; values withheld.')
         self.assertNotIn('synthetic-private-value', result.stderr)
+
+def pending_contract(main, driver):
+    def needs(source, *terms):
+        for term in terms:
+            if term not in source:
+                raise AssertionError('Required pending-entry contract absent')
+    stages = [main.index("$stage='" + x + "'") for x in
+              ('process_file_recovery', 'held_operation_refusal', 'pending_standalone_recovery',
+               'actual_version_upgrade', 'installed_candidate_activation')]
+    if stages != sorted(stages):
+        raise AssertionError('Pending entry stage order changed')
+    needs(main, 'test-pending-standalone-recovery.ps1',
+          '$standaloneRecoveryCheckpoint=New-PinnedPendingStandaloneJournal',
+          '$standaloneJournalRecoveryTested=$false;$standaloneRecoveryCheckpoint=0',
+          '$standaloneRecoveryCheckpoint -is [int] -and $standaloneRecoveryCheckpoint -eq 6',
+          '-not $standaloneJournalRecoveryTested -or $standaloneRecoveryCheckpoint -ne 6',
+          'standaloneJournalRecoveryTested=$standaloneJournalRecoveryTested',
+          'standaloneRecoveryCheckpoint=$standaloneRecoveryCheckpoint')
+    needs(driver, '-not $owned', '-not $controlledRollbackTested', '$rollbackPointsPassed -ne 11',
+          '-not $processFileRecoveryTested', '$processRecoveryPoints -ne 11', '-not $leaseRefused',
+          'github-hosted', 'GITHUB_REPOSITORY_ID', 'TQR_NATIVE_LAB_RUN', 'PSEdition',
+          '$null=& python', 'prepare-clean-upgrade.py', 'if($LASTEXITCODE -ne 0)',
+          '$point=6', 'return [int]$point', 'Remember-Process $apply $hostPath',
+          '$ready.WaitOne(20000)', '$apply.Kill()', '$apply.WaitForExit(5000)',
+          '$apply.StartTime.ToUniversalTime().Ticks -eq $started',
+          '$apply.MainModule.FileName -ieq $hostPath', '$apply.Id -ne $PID',
+          '$mixedPlan -and $changedPrefix -and $unchangedSuffix',
+          "@($record.entries).Count -eq 11", "$record.state -ceq 'prepared'",
+          '(Digest $journal) -ceq $journalHash', '(Digest $config) -ceq $configHash',
+          '$installed.versionCode -eq $oldCode')
+    for term in ('GITHUB_REPOSITORY_ID', 'prepare-clean-upgrade.py', 'Require-UnlinkedPath $childScript'):
+        if driver.index(term) >= driver.index('[Diagnostics.Process]::Start'):
+            raise AssertionError('Process launch precedes required gate')
+    real = main.split("$stage='actual_version_upgrade'", 1)[1].split(
+        "$stage='installed_candidate_activation'", 1)[0]
+    needs(real, '$setup=Launch-Installer $newExe $newHash', 'Assert-Files $newPlan',
+          '(Digest $config) -ceq $configHash', '$setup.ExitCode -eq 0',
+          "$temporaryAbsent -and -not(Test-Path -LiteralPath $recovery)",
+          '$standaloneJournalRecoveryTested=$true')
+    if real.index('$standaloneJournalRecoveryTested=$true') <= real.index('$temporaryAbsent -and'):
+        raise AssertionError('Recovery success precedes required evidence')
+    for forbidden in ('Remove-Item', 'Copy-Item', 'WriteAllText', 'WriteAllBytes',
+                      'File.Delete', 'Directory.Delete', 'RecoverInterruptedFileTransaction',
+                      'Stop-Process -Name', 'Restart-Service', 'Restart-NetAdapter', 'netsh '):
+        if forbidden in driver or forbidden in real:
+            raise AssertionError('Manual recovery or broad mutation entered pending entry')
+    report = main.rsplit('[pscustomobject]@{', 1)[1]
+    needs(report, 'schema=2', 'desktopElevationTested=$false',
+          'publicFeedVerified=$false', 'interruptedUpgradeTested=$false')
+    for term in ('$record', '$identity.User', '$configHash', '$journalHash', '$nonce', '.Message'):
+        if term in report:
+            raise AssertionError('Local state entered published evidence')
+    return True
+
+
+class PendingStandaloneContracts(unittest.TestCase):
+    def setUp(self):
+        self.main = (ROOT / 'test-clean-version-upgrade.ps1').read_text('utf-8-sig')
+        self.driver = (ROOT / 'test-pending-standalone-recovery.ps1').read_text('utf-8-sig')
+
+    def test_scoped_pending_entry_contract(self):
+        self.assertTrue(pending_contract(self.main, self.driver))
+
+    def test_weakened_pending_entry_variants_are_refused(self):
+        cases = (
+            (0, '-not $standaloneJournalRecoveryTested -or $standaloneRecoveryCheckpoint -ne 6'),
+            (0, '$standaloneRecoveryCheckpoint -is [int] -and $standaloneRecoveryCheckpoint -eq 6'),
+            (0, 'interruptedUpgradeTested=$false'),
+            (1, '-not $owned'), (1, '$processRecoveryPoints -ne 11'),
+            (1, 'GITHUB_REPOSITORY_ID'), (1, '$null=& python'), (1, 'if($LASTEXITCODE -ne 0)'),
+            (1, 'Remember-Process $apply $hostPath'), (1, '$apply.Kill()'),
+            (1, '$apply.WaitForExit(5000)'), (1, '$apply.MainModule.FileName -ieq $hostPath'),
+            (1, '$apply.StartTime.ToUniversalTime().Ticks -eq $started'),
+            (1, '$mixedPlan -and $changedPrefix -and $unchangedSuffix'),
+            (1, '(Digest $journal) -ceq $journalHash'), (1, '(Digest $config) -ceq $configHash'),
+        )
+        for index, term in cases:
+            with self.subTest(index=index, term=term):
+                sources = [self.main, self.driver]
+                self.assertIn(term, sources[index])
+                sources[index] = sources[index].replace(term, 'REMOVED')
+                with self.assertRaises((AssertionError, ValueError)):
+                    pending_contract(*sources)
+
+    def test_manual_recovery_and_early_success_are_refused(self):
+        for token in ('Remove-Item', 'Copy-Item', 'RecoverInterruptedFileTransaction'):
+            with self.subTest(token=token):
+                with self.assertRaises(AssertionError):
+                    pending_contract(self.main, self.driver + '\n' + token)
+        changed = self.main.replace('$standaloneJournalRecoveryTested=$true', '')
+        changed = changed.replace("$stage='actual_version_upgrade'", """$stage='actual_version_upgrade'
+    $standaloneJournalRecoveryTested=$true""")
+        with self.assertRaises(AssertionError): pending_contract(changed, self.driver)
+
+    def test_pending_checkpoint_is_exact_integer(self):
+        report, old, new = fixture()
+        for value in (None, True, False, 0, 5, 7, 11, '6', 6.0, [6]):
+            with self.subTest(value=value):
+                changed = copy.deepcopy(report); changed['standaloneRecoveryCheckpoint'] = value
+                with self.assertRaises(v.Refused): v.validate(changed, old, new, SOURCE)
+
+    def test_old_complete_evidence_cannot_claim_pending_entry(self):
+        report, old, new = fixture()
+        report['schema'] = 1
+        del report['standaloneJournalRecoveryTested']
+        del report['standaloneRecoveryCheckpoint']
+        report['cases'] = [case for case in report['cases'] if not case['name'].startswith(
+            ('Pending entry ', 'Standalone entry completes pending'))]
+        self.assertEqual(len(report['cases']), 252)
+        with self.assertRaises(v.Refused): v.validate(report, old, new, SOURCE)
 
 
 if __name__ == '__main__':

@@ -84,6 +84,7 @@ $passed=$false;$owned=$false;$cleanupPassed=$false;$leaseType=$null
 $upgradeExecuted=$false;$downgradeRefused=$false;$leaseRefused=$false
 $controlledRollbackTested=$false;$rollbackPointsPassed=0
 $processFileRecoveryTested=$false;$processRecoveryPoints=0
+$standaloneJournalRecoveryTested=$false;$standaloneRecoveryCheckpoint=0
 $stage='initial';$failure='';$failureReason=''
 function Check([bool]$Value,[string]$Name){
     $cases.Add([pscustomobject]@{name=$Name;passed=$Value})
@@ -254,6 +255,11 @@ try{
     $leaseRefused=$true
     [void](Native $oldType 'ReleaseOperationLock');$leaseType=$null
 
+    $stage='pending_standalone_recovery'
+    . (Join-Path $PSScriptRoot 'test-pending-standalone-recovery.ps1')
+    $standaloneRecoveryCheckpoint=New-PinnedPendingStandaloneJournal
+    Check ($standaloneRecoveryCheckpoint -is [int] -and $standaloneRecoveryCheckpoint -eq 6) 'Pending entry returns only the verified checkpoint number'
+
     $stage='actual_version_upgrade'
     $setup=Launch-Installer $newExe $newHash
     $upgradeExecuted=$true
@@ -268,6 +274,13 @@ try{
            $installed.versionCode -gt $oldCode) 'Installed metadata records the genuinely newer candidate'
     Check ((Digest $config) -ceq $configHash) 'Version transition preserves the entire configuration byte-for-byte'
     Check ((Native $newType 'ReadConfiguredPeer') -ceq 'fixture-device.invalid' -and [bool](Native $newType 'IsStartupEnabled')) 'Target and startup preferences survive the version transition'
+
+    $temporaryAbsent=$true
+    foreach($file in $newPlan){foreach($suffix in @('.setup.new','.setup.recover')){
+        if(Test-Path -LiteralPath ($file.Target+$suffix)){$temporaryAbsent=$false}
+    }}
+    Check ($temporaryAbsent -and -not(Test-Path -LiteralPath $recovery)) 'Standalone entry completes pending journal recovery without manual cleanup'
+    $standaloneJournalRecoveryTested=$true
 
     $stage='installed_candidate_activation'
     $watch=[Diagnostics.Stopwatch]::StartNew();$appProcess=$null
@@ -344,7 +357,7 @@ try{
     }
     [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
     [pscustomobject]@{
-        schema=1;passed=$passed;testSource=$env:GITHUB_SHA
+        schema=2;passed=$passed;testSource=$env:GITHUB_SHA
         predecessorSource=[string]$oldPins.source;candidateSource=[string]$newPins.source
         predecessorVersion=$oldVersion;candidateVersion=$newVersion
         predecessorSha256=$oldHash;candidateSha256=$newHash;payloadSha256=$newZipHash
@@ -352,10 +365,12 @@ try{
         versionUpgradeExecuted=$upgradeExecuted;downgradeRefused=$downgradeRefused;competingOperationRefused=$leaseRefused
         controlledFileRollbackTested=$controlledRollbackTested;controlledRollbackPoints=$rollbackPointsPassed
         processFileRecoveryTested=$processFileRecoveryTested;processRecoveryPoints=$processRecoveryPoints
+        standaloneJournalRecoveryTested=$standaloneJournalRecoveryTested;standaloneRecoveryCheckpoint=$standaloneRecoveryCheckpoint
         desktopElevationTested=$false;publicFeedVerified=$false;interruptedUpgradeTested=$false
-        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. File-transaction host termination and fresh-process recovery are tested at all replacement points. Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested.'
+        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. File-transaction host termination and fresh-process recovery are tested at all replacement points. Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested. Normal standalone entry is tested with a pending mixed-version file journal at checkpoint six.'
     }|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $report -Encoding UTF8
 }
 if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11 -or
-   -not $processFileRecoveryTested -or $processRecoveryPoints -ne 11){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
+   -not $processFileRecoveryTested -or $processRecoveryPoints -ne 11 -or
+   -not $standaloneJournalRecoveryTested -or $standaloneRecoveryCheckpoint -ne 6){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
 Write-Host 'Pinned native version upgrade and downgrade refusal passed; desktop consent and delivery remain separate.'
