@@ -13,6 +13,7 @@ function New-PinnedPendingStandaloneJournal {
     $null=& python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory
     if($LASTEXITCODE -ne 0){throw 'Standalone recovery inputs failed verification.'}
     if($newPlan.Count -ne 11 -or $oldPlan.Count -ne 11){throw 'Fixed standalone recovery plans required.'}
+    & (Join-Path $PSScriptRoot 'test-replacement-pause.ps1')
     Assert-Files $oldPlan 'Pending entry starts from every exact predecessor file'
     Check (-not(Test-Path -LiteralPath $recovery)) 'Pending entry refuses any earlier recovery journal'
     $point=6
