@@ -10,7 +10,7 @@ class ControlledRollbackWiringTests(unittest.TestCase):
     def setUp(self):
         self.source = (ROOT / 'test-clean-version-upgrade.ps1').read_text('utf-8-sig')
         self.block = self.source.split("    $stage='controlled_file_rollback'\n", 1)[1].split(
-            "    $stage='held_operation_refusal'\n", 1)[0]
+            "    $stage='process_file_recovery'\n", 1)[0]
 
     def test_existing_guard_and_input_verification_precede_native_work(self):
         for guard in ('github-hosted', 'GITHUB_REPOSITORY_ID', 'TQR_NATIVE_LAB_RUN',
@@ -76,7 +76,7 @@ class ControlledRollbackWiringTests(unittest.TestCase):
             self.assertIn(field, report)
         for value in ('$configHash', '$identity.User', '$record', '.Message', '$env:USERNAME'):
             self.assertNotIn(value, report)
-        self.assertIn('Process termination, power loss, secure-desktop consent and public delivery are not tested.', report)
+        self.assertIn('Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested.', report)
 
     def test_no_new_network_or_process_kill_in_fault_loop(self):
         for token in ('Start-Service', 'Restart-Service', 'Restart-NetAdapter', 'netsh ',
@@ -86,7 +86,7 @@ class ControlledRollbackWiringTests(unittest.TestCase):
 
     def test_final_exit_gate_requires_all_points(self):
         self.assertIn('$controlledRollbackTested=$false;$rollbackPointsPassed=0', self.source)
-        self.assertIn('if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11)', self.source)
+        self.assertIn('if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11 -or', self.source)
         self.assertIn('if($passed -and $owned)', self.source)
         self.assertIn('Existing evidence must not be overwritten.', self.source)
 
