@@ -39,6 +39,8 @@ jobs:
         run: python3 -B release/test-build-profile.py
       - name: Check clean baseline with synthetic artifacts
         run: python3 -B release/test-clean-baseline.py
+      - name: Check staged baseline and native Setup boundaries
+        run: python3 -B release/test-clean-setup-boundaries.py
       - name: Check released migration input boundaries
         run: python3 -B release/test-released-migration-inputs.py
       - name: Check Setup entry test boundaries
@@ -369,3 +371,61 @@ jobs:
             ${{ runner.temp }}/tqr-entry-evidence/source-syntax-results.json
             ${{ runner.temp }}/tqr-entry-evidence/setup-entry-results.json
           if-no-files-found: ignore
+  clean-setup-entry:
+    if: github.repository == 'coachedai/tailscale-repair-clean' && github.repository_id == '1398720044' && (github.ref_name == 'main' || github.ref_name == 'work/public')
+    needs: [preflight, clean-baseline, startup-windows]
+    runs-on: windows-latest
+    timeout-minutes: 7
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          submodules: false
+      - name: Require exact isolated source
+        run: |
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Source boundary failed.'}
+          .\release\test-source-syntax.ps1 -EvidenceDirectory "$env:RUNNER_TEMP\tqr-clean-entry-evidence"
+      - name: Receive verified baseline from this run only
+        uses: actions/download-artifact@v4
+        with:
+          name: clean-upgrade-baseline
+          path: ${{ runner.temp }}/tqr-clean-entry-inputs
+      - name: Exercise real baseline Setup and installed application
+        env:
+          TQR_NATIVE_LAB_RUN: ${{ github.run_id }}
+        run: |
+          .\release\test-clean-setup-entry.ps1 -InputDirectory "$env:RUNNER_TEMP\tqr-clean-entry-inputs" -EvidenceDirectory "$env:RUNNER_TEMP\tqr-clean-entry-evidence"
+      - name: Require scoped native evidence and unchanged source
+        run: |
+          $r=Get-Content "$env:RUNNER_TEMP\tqr-clean-entry-evidence\clean-setup-entry-results.json" -Raw|ConvertFrom-Json
+          $pins=Get-Content release/clean-baseline.json -Raw|ConvertFrom-Json
+          if($r.passed -isnot [bool] -or -not $r.passed -or $r.testSource -cne $env:GITHUB_SHA -or $r.baselineSource -cne $pins.source){throw 'Native evidence identity failed.'}
+          foreach($name in @('cleanupPassed','setupEntryExecuted','sameVersionServicingExecuted')){
+            if($r.$name -isnot [bool] -or -not $r.$name){throw 'Native entry evidence is incomplete.'}
+          }
+          foreach($name in @('versionUpgradeTested','desktopElevationTested','publicFeedVerified')){
+            if($r.$name -isnot [bool] -or $r.$name){throw 'Entry evidence exceeded its tested scope.'}
+          }
+          if(@($r.cases).Count -lt 1 -or @($r.cases|Where-Object {$_.passed -isnot [bool] -or -not $_.passed}).Count){throw 'Native assertions failed.'}
+          python -B release/check-repository.py --ci
+          if($LASTEXITCODE -ne 0){throw 'Final source check failed.'}
+          git diff --exit-code
+          if($LASTEXITCODE -ne 0){throw 'Native acceptance changed tracked source.'}
+      - name: Preserve typed native entry results only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clean-setup-entry-evidence
+          path: |
+            ${{ runner.temp }}/tqr-clean-entry-evidence/source-syntax-results.json
+            ${{ runner.temp }}/tqr-clean-entry-evidence/clean-setup-entry-results.json
+          if-no-files-found: ignore
+          retention-days: 30
