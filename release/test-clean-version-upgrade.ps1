@@ -33,6 +33,8 @@ foreach($p in @($InputDirectory,$EvidenceDirectory)){
 }
 $report=Join-Path $EvidenceDirectory 'clean-version-upgrade-results.json'
 if(Test-Path -LiteralPath $report){throw 'Existing evidence must not be overwritten.'}
+& python -B (Join-Path $PSScriptRoot 'test-controlled-rollback.py')
+if($LASTEXITCODE -ne 0){throw 'Controlled rollback wiring checks failed.'}
 # The verifier also requires exact repository/checkout identity and release locks.
 & python -B (Join-Path $PSScriptRoot 'prepare-clean-upgrade.py') verify $InputDirectory
 if($LASTEXITCODE -ne 0){throw 'Pinned upgrade inputs failed verification.'}
@@ -78,6 +80,7 @@ $ownedProcesses=New-Object 'Collections.Generic.List[object]'
 $flags=[Reflection.BindingFlags]'Public,NonPublic,Static,Instance'
 $passed=$false;$owned=$false;$cleanupPassed=$false;$leaseType=$null
 $upgradeExecuted=$false;$downgradeRefused=$false;$leaseRefused=$false
+$controlledRollbackTested=$false;$rollbackPointsPassed=0
 $stage='initial';$failure='';$failureReason=''
 function Check([bool]$Value,[string]$Name){
     $cases.Add([pscustomobject]@{name=$Name;passed=$Value})
@@ -163,8 +166,8 @@ try{
     Check ($oldPlan.Count -eq 11 -and $newPlan.Count -eq 11) 'Both actual native manifests verify their complete file plans'
     Check ((Native $oldType 'GetAppDir') -ceq $app -and (Native $oldType 'GetProgramDir') -ceq $program -and
            (Native $newType 'GetAppDir') -ceq $app -and (Native $newType 'GetProgramDir') -ceq $program) 'Both installers resolve only the guarded empty product roots'
-    # Only predecessor seeding uses native methods. Version transition below
-    # must execute the unmodified distributed candidate as a process.
+    # Predecessor seeding and controlled-fault rollback use native methods.
+    # The actual version transition still requires the distributed process.
     Check ([bool](Native $oldType 'TryAcquireOperationLock' @('setup'))) 'Predecessor seed obtains the real installation lease'
     $leaseType=$oldType;$owned=$true
     [void](Native $oldType 'ApplyFiles' @($oldPlan,$work))
@@ -178,6 +181,56 @@ try{
     $settings|Add-Member -NotePropertyName retainedFixture -NotePropertyValue 'retained'
     [IO.File]::WriteAllText($config,($settings|ConvertTo-Json -Depth 5),(New-Object Text.UTF8Encoding($false)))
     $configHash=Digest $config
+
+    $stage='controlled_file_rollback'
+    # Exercise the candidate's real exception-recovery path at every file
+    # replacement. These callbacks do not model process death or power loss.
+    Check ([bool](Native $newType 'TryAcquireOperationLock' @('setup'))) 'Controlled rollback owns the actual Setup lease'
+    $leaseType=$newType
+    $oldTargets=@{}
+    foreach($file in $oldPlan){$oldTargets[$file.Target]=[string]$file.Sha256}
+    $differentFiles=@($newPlan|Where-Object {$oldTargets[$_.Target] -cne $_.Sha256})
+    Check ($differentFiles.Count -gt 0) 'Rollback exercises genuinely different predecessor and candidate bytes'
+    for($checkpoint=1;$checkpoint -le $newPlan.Count;$checkpoint++){
+        Assert-Files $oldPlan ('Rollback point '+$checkpoint+' starts with the exact predecessor')
+        Check (-not (Test-Path -LiteralPath $recovery)) ('Rollback point '+$checkpoint+' has no previous recovery journal')
+        $script:rollbackCheckpoint=$checkpoint
+        $script:rollbackFaultReached=$false
+        $script:rollbackCandidateObserved=$false
+        $script:rollbackPreparedObserved=$false
+        $fault=[Action[int]]{
+            param($step)
+            if($step -eq $script:rollbackCheckpoint){
+                $script:rollbackFaultReached=$true
+                $current=$newPlan[$step-1]
+                Require-UnlinkedPath $current.Target
+                $script:rollbackCandidateObserved=((Digest $current.Target) -ceq $current.Sha256)
+                $journal=Join-Path $recovery 'transaction.json'
+                Require-UnlinkedPath $journal
+                $record=Get-Content -LiteralPath $journal -Raw|ConvertFrom-Json
+                $script:rollbackPreparedObserved=($record.state -ceq 'prepared' -and @($record.entries).Count -eq $newPlan.Count)
+                throw [InvalidOperationException]::new('Synthetic replacement fault.')
+            }
+        }
+        $failed=$false
+        try{[void](Native $newType 'ApplyFilesCore' @($newPlan,$work,$fault))}catch{$failed=$true}
+        Check ($failed -and $script:rollbackFaultReached -and $script:rollbackCandidateObserved -and
+               $script:rollbackPreparedObserved) ('Rollback point '+$checkpoint+' injects only after a verified candidate replacement')
+        Assert-Files $oldPlan ('Rollback point '+$checkpoint+' restores every exact predecessor file')
+        Check ((Digest $config) -ceq $configHash) ('Rollback point '+$checkpoint+' preserves all configuration bytes')
+        $temporaryAbsent=$true
+        foreach($file in $newPlan){
+            foreach($suffix in @('.setup.new','.setup.recover')){
+                if(Test-Path -LiteralPath ($file.Target+$suffix)){$temporaryAbsent=$false}
+            }
+        }
+        Check ($temporaryAbsent -and -not (Test-Path -LiteralPath $recovery)) ('Rollback point '+$checkpoint+' completes native recovery without manual cleanup')
+        $rollbackPointsPassed++
+    }
+    Check ($rollbackPointsPassed -eq 11 -and $rollbackPointsPassed -eq $newPlan.Count) 'All fixed candidate replacement points pass controlled rollback'
+    Check ((Native $newType 'ReadConfiguredPeer') -ceq 'fixture-device.invalid' -and [bool](Native $newType 'IsStartupEnabled')) 'Controlled rollback preserves target and startup preferences'
+    $controlledRollbackTested=$true
+    [void](Native $newType 'ReleaseOperationLock');$leaseType=$null
 
     $stage='held_operation_refusal'
     Check ([bool](Native $oldType 'TryAcquireOperationLock' @('maintenance'))) 'Fixture owns a real competing operation lease'
@@ -288,9 +341,10 @@ try{
         predecessorSha256=$oldHash;candidateSha256=$newHash;payloadSha256=$newZipHash
         cases=@($cases.ToArray());cleanupPassed=$cleanupPassed;failureType=$failure;failureReason=$failureReason;stage=$stage
         versionUpgradeExecuted=$upgradeExecuted;downgradeRefused=$downgradeRefused;competingOperationRefused=$leaseRefused
+        controlledFileRollbackTested=$controlledRollbackTested;controlledRollbackPoints=$rollbackPointsPassed
         desktopElevationTested=$false;publicFeedVerified=$false;interruptedUpgradeTested=$false
-        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. Secure-desktop consent, interrupted-upgrade recovery and public delivery are not tested.'
+        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. Process termination, power loss, secure-desktop consent and public delivery are not tested.'
     }|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $report -Encoding UTF8
 }
-if(-not $passed){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
+if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
 Write-Host 'Pinned native version upgrade and downgrade refusal passed; desktop consent and delivery remain separate.'
