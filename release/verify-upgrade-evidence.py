@@ -12,7 +12,8 @@ REPOSITORY_ID = '1398720044'
 MAX_REPORT = 128 * 1024
 POINTS = 11
 TRUE_FIELDS = ('passed', 'cleanupPassed', 'versionUpgradeExecuted', 'downgradeRefused',
-               'competingOperationRefused', 'controlledFileRollbackTested', 'processFileRecoveryTested')
+               'competingOperationRefused', 'controlledFileRollbackTested', 'processFileRecoveryTested',
+               'standaloneJournalRecoveryTested')
 FALSE_FIELDS = ('desktopElevationTested', 'publicFeedVerified', 'interruptedUpgradeTested')
 COUNT_FIELDS = ('controlledRollbackPoints', 'processRecoveryPoints')
 IDENTITY_FIELDS = ('testSource', 'predecessorSource', 'candidateSource', 'predecessorVersion',
@@ -23,7 +24,8 @@ SCOPE = ('Pinned RC12 seeded by its native installer methods; unchanged RC13 sta
          'preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. '
          'File-transaction host termination and fresh-process recovery are tested at all replacement '
          'points. Full installer/integration termination, power loss, secure-desktop consent and '
-         'public delivery are not tested.')
+         'public delivery are not tested. Normal standalone entry is tested with a pending '
+         'mixed-version file journal at checkpoint six.')
 SEED_CASES = (
     'Candidate Setup displays its real initial dialog',
     'Candidate cancellation targets only its owned window',
@@ -67,6 +69,16 @@ UPGRADE_CASES = (
     'Blocked upgrade returns the expected refusal code',
     'Blocked upgrade preserves every predecessor file',
     'Blocked upgrade preserves exact configuration bytes',
+    'Pending entry starts from every exact predecessor file',
+    'Pending entry refuses any earlier recovery journal',
+    'Pending entry reaches the sixth real replacement callback',
+    'Pending entry proves a genuinely mixed predecessor and candidate layout',
+    'Pending entry observes the complete prepared native journal',
+    'Pending entry identifies only its owned transaction process',
+    'Pending entry confirms process death without exception unwinding',
+    'Pending entry preserves the interrupted journal and settings for Setup',
+    'Pending entry retains predecessor version identity before normal Setup',
+    'Pending entry returns only the verified checkpoint number',
     'Unmodified candidate entry reports a successful version upgrade',
     'Real version upgrade installs all exact candidate files',
     'Upgrade completion uses the real Setup dialog',
@@ -74,6 +86,7 @@ UPGRADE_CASES = (
     'Installed metadata records the genuinely newer candidate',
     'Version transition preserves the entire configuration byte-for-byte',
     'Target and startup preferences survive the version transition',
+    'Standalone entry completes pending journal recovery without manual cleanup',
     'Candidate Setup itself launches the installed application',
     'The upgraded WPF application loads and responds',
     'Upgraded application clears its restart acknowledgement',
@@ -147,9 +160,10 @@ def identities(old, new, source):
 def validate(report, old, new, source):
     expected = identities(old, new, source)
     fields = set(TRUE_FIELDS + FALSE_FIELDS + COUNT_FIELDS + IDENTITY_FIELDS)
-    fields |= {'schema', 'cases', 'failureType', 'failureReason', 'stage', 'scope'}
+    fields |= {'schema', 'cases', 'failureType', 'failureReason', 'stage', 'scope', 'standaloneRecoveryCheckpoint'}
     require(type(report) is dict and set(report) == fields)
-    require(type(report['schema']) is int and report['schema'] == 1)
+    require(type(report['schema']) is int and report['schema'] == 2)
+    require(type(report['standaloneRecoveryCheckpoint']) is int and report['standaloneRecoveryCheckpoint'] == 6)
     for key in TRUE_FIELDS:
         require(report[key] is True)
     for key in FALSE_FIELDS:
