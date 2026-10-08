@@ -85,6 +85,7 @@ $upgradeExecuted=$false;$downgradeRefused=$false;$leaseRefused=$false
 $controlledRollbackTested=$false;$rollbackPointsPassed=0
 $processFileRecoveryTested=$false;$processRecoveryPoints=0
 $standaloneJournalRecoveryTested=$false;$standaloneRecoveryCheckpoint=0
+$standaloneProcessTerminationTested=$false
 $stage='initial';$failure='';$failureReason=''
 function Check([bool]$Value,[string]$Name){
     $cases.Add([pscustomobject]@{name=$Name;passed=$Value})
@@ -259,6 +260,7 @@ try{
     . (Join-Path $PSScriptRoot 'test-pending-standalone-recovery.ps1')
     $standaloneRecoveryCheckpoint=New-PinnedPendingStandaloneJournal
     Check ($standaloneRecoveryCheckpoint -is [int] -and $standaloneRecoveryCheckpoint -eq 6) 'Pending entry returns only the verified checkpoint number'
+    $standaloneProcessTerminationTested=$true
 
     $stage='actual_version_upgrade'
     $setup=Launch-Installer $newExe $newHash
@@ -357,7 +359,7 @@ try{
     }
     [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
     [pscustomobject]@{
-        schema=2;passed=$passed;testSource=$env:GITHUB_SHA
+        schema=3;passed=$passed;testSource=$env:GITHUB_SHA
         predecessorSource=[string]$oldPins.source;candidateSource=[string]$newPins.source
         predecessorVersion=$oldVersion;candidateVersion=$newVersion
         predecessorSha256=$oldHash;candidateSha256=$newHash;payloadSha256=$newZipHash
@@ -366,11 +368,13 @@ try{
         controlledFileRollbackTested=$controlledRollbackTested;controlledRollbackPoints=$rollbackPointsPassed
         processFileRecoveryTested=$processFileRecoveryTested;processRecoveryPoints=$processRecoveryPoints
         standaloneJournalRecoveryTested=$standaloneJournalRecoveryTested;standaloneRecoveryCheckpoint=$standaloneRecoveryCheckpoint
+        standaloneProcessTerminationTested=$standaloneProcessTerminationTested
         desktopElevationTested=$false;publicFeedVerified=$false;interruptedUpgradeTested=$false
-        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. File-transaction host termination and fresh-process recovery are tested at all replacement points. Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested. Normal standalone entry is tested with a pending mixed-version file journal at checkpoint six.'
+        scope='Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs the version transition on an already elevated disposable Windows runner. Includes controlled exception rollback after each candidate file replacement, settings preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. File-transaction host termination and fresh-process recovery are tested at all replacement points. Later integration-stage termination, power loss, secure-desktop consent and public delivery are not tested. Normal standalone entry is tested with a pending mixed-version file journal at checkpoint six. The unchanged standalone installer is forcibly terminated before its seventh file replacement; a fresh normal invocation recovers the six-file prefix and completes.'
     }|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $report -Encoding UTF8
 }
 if(-not $passed -or -not $controlledRollbackTested -or $rollbackPointsPassed -ne 11 -or
    -not $processFileRecoveryTested -or $processRecoveryPoints -ne 11 -or
+   -not $standaloneProcessTerminationTested -or
    -not $standaloneJournalRecoveryTested -or $standaloneRecoveryCheckpoint -ne 6){throw 'Version upgrade acceptance failed; typed evidence preserved.'}
 Write-Host 'Pinned native version upgrade and downgrade refusal passed; desktop consent and delivery remain separate.'

@@ -76,7 +76,7 @@ class ControlledRollbackWiringTests(unittest.TestCase):
             self.assertIn(field, report)
         for value in ('$configHash', '$identity.User', '$record', '.Message', '$env:USERNAME'):
             self.assertNotIn(value, report)
-        self.assertIn('Full installer/integration termination, power loss, secure-desktop consent and public delivery are not tested.', report)
+        self.assertIn('Later integration-stage termination, power loss, secure-desktop consent and public delivery are not tested.', report)
 
     def test_no_new_network_or_process_kill_in_fault_loop(self):
         for token in ('Start-Service', 'Restart-Service', 'Restart-NetAdapter', 'netsh ',

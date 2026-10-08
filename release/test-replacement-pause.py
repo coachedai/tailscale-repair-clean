@@ -58,7 +58,7 @@ def validate(helper, probe, caller):
     require(caller, call)
     if caller.count(call) != 1 or not (
             caller.index('Standalone recovery inputs failed verification.') < caller.index(call)
-            < caller.index('Assert-Files $oldPlan') < caller.index('[Diagnostics.Process]::Start')):
+            < caller.index('Assert-Files $oldPlan') < caller.index('$interrupted=Launch-Installer')):
         raise AssertionError('Native prerequisite was moved past installed mutation')
     return True
 
