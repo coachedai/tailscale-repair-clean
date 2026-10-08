@@ -13,19 +13,20 @@ MAX_REPORT = 128 * 1024
 POINTS = 11
 TRUE_FIELDS = ('passed', 'cleanupPassed', 'versionUpgradeExecuted', 'downgradeRefused',
                'competingOperationRefused', 'controlledFileRollbackTested', 'processFileRecoveryTested',
-               'standaloneJournalRecoveryTested')
+               'standaloneJournalRecoveryTested', 'standaloneProcessTerminationTested')
 FALSE_FIELDS = ('desktopElevationTested', 'publicFeedVerified', 'interruptedUpgradeTested')
 COUNT_FIELDS = ('controlledRollbackPoints', 'processRecoveryPoints')
 IDENTITY_FIELDS = ('testSource', 'predecessorSource', 'candidateSource', 'predecessorVersion',
                    'candidateVersion', 'predecessorSha256', 'candidateSha256', 'payloadSha256')
-SCOPE = ('Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process '
-         'performs the version transition on an already elevated disposable Windows runner. '
-         'Includes controlled exception rollback after each candidate file replacement, settings '
-         'preservation, lease refusal, installed tray activation and real RC12 downgrade refusal. '
-         'File-transaction host termination and fresh-process recovery are tested at all replacement '
-         'points. Full installer/integration termination, power loss, secure-desktop consent and '
-         'public delivery are not tested. Normal standalone entry is tested with a pending '
-         'mixed-version file journal at checkpoint six.')
+SCOPE = ('Pinned RC12 seeded by its native installer methods; unchanged RC13 standalone process performs '
+         'the version transition on an already elevated disposable Windows runner. Includes controlled '
+         'exception rollback after each candidate file replacement, settings preservation, lease refusal, '
+         'installed tray activation and real RC12 downgrade refusal. File-transaction host termination and'
+         ' fresh-process recovery are tested at all replacement points. Later integration-stage '
+         'termination, power loss, secure-desktop consent and public delivery are not tested. Normal '
+         'standalone entry is tested with a pending mixed-version file journal at checkpoint six. The '
+         'unchanged standalone installer is forcibly terminated before its seventh file replacement; a '
+         'fresh normal invocation recovers the six-file prefix and completes.')
 SEED_CASES = (
     'Candidate Setup displays its real initial dialog',
     'Candidate cancellation targets only its owned window',
@@ -71,11 +72,14 @@ UPGRADE_CASES = (
     'Blocked upgrade preserves exact configuration bytes',
     'Pending entry starts from every exact predecessor file',
     'Pending entry refuses any earlier recovery journal',
-    'Pending entry reaches the sixth real replacement callback',
-    'Pending entry proves a genuinely mixed predecessor and candidate layout',
+    'Pending entry holds only the seventh pinned file',
+    'Pending entry starts the unchanged standalone installer',
+    'Pending entry reaches an acknowledgement-required replacement break',
+    'Pending entry observes six completed replacements before the held file',
     'Pending entry observes the complete prepared native journal',
-    'Pending entry identifies only its owned transaction process',
-    'Pending entry confirms process death without exception unwinding',
+    'Pending entry identifies only its owned standalone installer',
+    'Pending entry confirms standalone process death before releasing the hold',
+    'Pending entry proves a genuinely mixed predecessor and candidate layout',
     'Pending entry preserves the interrupted journal and settings for Setup',
     'Pending entry retains predecessor version identity before normal Setup',
     'Pending entry returns only the verified checkpoint number',
@@ -162,7 +166,7 @@ def validate(report, old, new, source):
     fields = set(TRUE_FIELDS + FALSE_FIELDS + COUNT_FIELDS + IDENTITY_FIELDS)
     fields |= {'schema', 'cases', 'failureType', 'failureReason', 'stage', 'scope', 'standaloneRecoveryCheckpoint'}
     require(type(report) is dict and set(report) == fields)
-    require(type(report['schema']) is int and report['schema'] == 2)
+    require(type(report['schema']) is int and report['schema'] == 3)
     require(type(report['standaloneRecoveryCheckpoint']) is int and report['standaloneRecoveryCheckpoint'] == 6)
     for key in TRUE_FIELDS:
         require(report[key] is True)
